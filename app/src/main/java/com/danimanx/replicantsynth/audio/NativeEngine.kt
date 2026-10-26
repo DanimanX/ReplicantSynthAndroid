@@ -73,6 +73,25 @@ object NativeEngine {
         velocity: Int,
     )
 
+    external fun nativeSetMidiNote(
+        handle: Long,
+        pad: Int,
+        on: Boolean,
+        note: Int,
+        start: Int,
+        length: Int,
+        velocity: Int,
+    )
+
+    external fun nativeClearMidiNotes(handle: Long, pad: Int)
+    external fun nativePreviewNote(
+        handle: Long,
+        pad: Int,
+        on: Boolean,
+        note: Int,
+        velocity: Int,
+    )
+
     external fun nativeEnsureFx(handle: Long, pad: Int)
     external fun nativeClearClip(handle: Long, pad: Int)
 

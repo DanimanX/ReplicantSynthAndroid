@@ -12,7 +12,7 @@ import java.io.File
  */
 object ProjectStore {
     const val FILE_NAME = "project.json"
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     fun save(context: Context, project: ProjectState): Boolean = runCatching {
         val file = File(context.filesDir, FILE_NAME)
@@ -69,6 +69,17 @@ object ProjectStore {
                 )
             }
             obj.put("steps", steps)
+
+            val midi = JSONArray()
+            clip.midiNotes.take(ClipLimits.MAX_MIDI_NOTES).forEach { note ->
+                midi.put(
+                    (note.note and 0x7F) or
+                        ((note.start and 0x0F) shl 8) or
+                        (((note.length - 1).coerceIn(0, 15)) shl 12) or
+                        ((note.velocity and 0x7F) shl 16),
+                )
+            }
+            obj.put("midiNotes", midi)
 
             val masks = JSONArray()
             clip.drumMask.take(ClipLimits.DRUM_VOICES).forEach { masks.put(it) }
@@ -135,6 +146,20 @@ object ProjectStore {
                         note = (packed shr 8) and 0x7F,
                         velocity = ((packed shr 16) and 0x7F).coerceAtLeast(1),
                     )
+                }
+            }
+
+            val midi = obj.optJSONArray("midiNotes")
+            if (midi != null) {
+                clip.midiNotes = buildList {
+                    for (i in 0 until minOf(midi.length(), ClipLimits.MAX_MIDI_NOTES)) {
+                        val packed = midi.optInt(i, 0)
+                        val note = packed and 0x7F
+                        val start = (packed shr 8) and 0x0F
+                        val length = ((packed shr 12) and 0x0F) + 1
+                        val velocity = ((packed shr 16) and 0x7F).coerceAtLeast(1)
+                        add(MidiNote(note, start, length, velocity))
+                    }
                 }
             }
 

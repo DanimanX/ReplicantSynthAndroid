@@ -39,6 +39,19 @@ inline float sanitize(float x) noexcept {
     if (!std::isfinite(x)) return 0.0f;
     return std::fabs(x) < 1.0e-20f ? 0.0f : x;
 }
+
+// Transparent peak limiter. Everything below `threshold` passes untouched, so
+// drums keep their transients; only overload is bent towards 1.0 with a
+// continuous first derivative (no hard knee, no intermodulation at low level).
+inline float softLimit(float x, float threshold = 0.90f) noexcept {
+    if (!std::isfinite(x)) return 0.0f;
+    const float ax = std::fabs(x);
+    if (ax <= threshold) return x;
+    const float range = std::max(1.0e-4f, 1.0f - threshold);
+    const float over = ax - threshold;
+    const float shaped = threshold + range * (1.0f - std::exp(-over / range));
+    return std::copysign(shaped, x);
+}
 inline float fractf(float x) noexcept { return x - std::floor(x); }
 inline float wrap01(float x) noexcept {
     x = std::fmod(x, 1.0f);

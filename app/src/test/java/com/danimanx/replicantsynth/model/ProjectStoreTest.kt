@@ -50,6 +50,27 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun roundTripsMidiNotes() {
+        val project = ProjectState()
+        val wave = project.clips[1]
+        applyKindDefaults(wave, ClipKind.WAVE)
+        wave.midiNotes = listOf(
+            MidiNote(note = 60, start = 0, length = 4, velocity = 110),
+            MidiNote(note = 64, start = 4, length = 2, velocity = 90),
+            MidiNote(note = 67, start = 12, length = 4, velocity = 127),
+            MidiNote(note = 48, start = 0, length = 16, velocity = 80),
+        )
+        val decoded = ProjectStore.decode(ProjectStore.encode(project))
+        assertEquals(4, decoded.clips[1].midiNotes.size)
+        assertEquals(60, decoded.clips[1].midiNotes[0].note)
+        assertEquals(4, decoded.clips[1].midiNotes[0].length)
+        assertEquals(110, decoded.clips[1].midiNotes[0].velocity)
+        assertEquals(67, decoded.clips[1].midiNotes[2].note)
+        assertEquals(12, decoded.clips[1].midiNotes[2].start)
+        assertEquals(16, decoded.clips[1].midiNotes[3].length)
+    }
+
+    @Test
     fun missingSampleIsMarked() {
         val project = ProjectState()
         val clip = project.clips[3]

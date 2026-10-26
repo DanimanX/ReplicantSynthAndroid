@@ -31,7 +31,9 @@ inline double besselJ(int n, double x) {
 inline int mipHarmonics(int mip, float sampleRate) {
     const float fundamental = kBankFreqBase * std::pow(2.0f, static_cast<float>(mip));
     const int limit = static_cast<int>((sampleRate * 0.46f) / fundamental);
-    return clampi(limit, 1, WavetableBanks::kMaxHarmonics);
+    // amp/phase hold kMaxHarmonics entries (0..191); harmonic 192 would read
+    // past the end of both tables.
+    return clampi(limit, 1, WavetableBanks::kMaxHarmonics - 1);
 }
 
 // Fills the harmonic amplitude/phase tables for one bank frame.
@@ -374,7 +376,7 @@ int WaveSynth::chordInterval(int chord, int index) const {
     return intervals[c][i];
 }
 
-void WaveSynth::startVoice(int note, int velocity) {
+void WaveSynth::startVoice(int note, int velocity, int rootNote) {
     int slot = -1;
     for (int i = 0; i < kVoices; ++i) {
         if (!voices_[static_cast<size_t>(i)].active) {
@@ -397,6 +399,7 @@ void WaveSynth::startVoice(int note, int velocity) {
     v.active = true;
     v.held = true;
     v.note = clampi(note, 0, 127);
+    v.rootNote = clampi(rootNote, 0, 127);
     v.velocity = clampf(static_cast<float>(velocity) / 127.0f, 0.05f, 1.0f);
     v.age = ++ageCounter_;
     v.env.prepare(sampleRateF_);
@@ -420,14 +423,20 @@ void WaveSynth::noteOn(int note, int velocity) {
     // Chord mode: trigger up to three notes with the same velocity.
     const int notes = (params_.chord == 0) ? 1 : 3;
     for (int i = 0; i < notes; ++i) {
-        startVoice(note + chordInterval(params_.chord, i), velocity);
+        startVoice(note + chordInterval(params_.chord, i), velocity, note);
     }
 }
 
 void WaveSynth::noteOff(int note) {
-    // A clip is a monophonic phrase: releasing any note releases the chord.
-    (void)note;
-    allNotesOff();
+    // Release every voice that belongs to this key. Chord mode starts three
+    // voices for one key, and a piano roll can hold several keys at once, so
+    // releasing by note is what keeps polyphonic clips from choking each other.
+    for (auto& v : voices_) {
+        if (v.active && v.rootNote == note && v.held) {
+            v.held = false;
+            v.env.noteOff();
+        }
+    }
 }
 
 void WaveSynth::allNotesOff() {

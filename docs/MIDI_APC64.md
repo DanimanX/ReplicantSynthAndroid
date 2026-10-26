@@ -39,6 +39,25 @@ opening ReplicantSynth so the handshake is sent to a fresh endpoint.
 The on-screen grid and the APC64 always refer to the same pad number; changing
 the base/flip only changes the USB note translation.
 
+## Notes and chords into the piano roll
+
+Every Wave clip has an **APC64 KEYS** switch in its piano roll (PATTERN tab or
+double-tap editor). When it is on, note-on/note-off messages in the pad range
+stop being clip launches and become key presses instead:
+
+1. The note lands on the amber **cursor** step with the selected length
+   (`1/16`, `1/8`, `1/4`, `1/2`) and the current note velocity.
+2. The cursor advances by that length, so playing pads in order writes a
+   phrase.
+3. The note is auditioned through the native Wave voice immediately.
+4. `OCT -` / `OCT +` transpose incoming keys by ±2 octaves.
+5. The chord button on the APC64 sends several note-ons per key; each one is
+   written as its own note. The clip's `CHORD` selector additionally makes the
+   synth voice play fifth / minor / major / octave stacks from a single note.
+
+Scene, transport, mute/solo, clip-stop and track-select notes keep their normal
+functions. Turn **APC64 KEYS** off to return the pads to clip launching.
+
 ## LED feedback
 
 APC64 LEDs use note-on velocity as a colour palette and the MIDI channel as
@@ -71,6 +90,7 @@ are sent in between.
 | Control | Message | App action |
 | --- | --- | --- |
 | Pads | Notes 0–63 | Launch/stop; selects the pad |
+| Pads (KEYS on) | Notes 0–63 | Write notes into the Wave piano roll |
 | Scene 1–8 | Notes 112–119 | Launch scene |
 | Play / Stop | 91 / 93 | Transport |
 | Record | 92 | Toggle master capture |

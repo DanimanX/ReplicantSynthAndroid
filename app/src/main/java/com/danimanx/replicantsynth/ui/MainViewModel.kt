@@ -22,8 +22,18 @@ import com.danimanx.replicantsynth.midi.TransportAction
 import com.danimanx.replicantsynth.model.Clip
 import com.danimanx.replicantsynth.model.ClipKind
 import com.danimanx.replicantsynth.model.ClipLimits
+import com.danimanx.replicantsynth.model.AcidPreset
+import com.danimanx.replicantsynth.model.AcidPresets
 import com.danimanx.replicantsynth.model.DemoProject
+import com.danimanx.replicantsynth.model.DrumPreset
+import com.danimanx.replicantsynth.model.DrumPresets
 import com.danimanx.replicantsynth.model.FxParam
+import com.danimanx.replicantsynth.model.MidiNote
+import com.danimanx.replicantsynth.model.WAVE_PRESETS
+import com.danimanx.replicantsynth.model.WavePreset
+import com.danimanx.replicantsynth.model.applyAcidPreset
+import com.danimanx.replicantsynth.model.applyDrumPreset
+import com.danimanx.replicantsynth.model.applyWavePreset
 import com.danimanx.replicantsynth.model.ProjectState
 import com.danimanx.replicantsynth.model.ProjectStore
 import com.danimanx.replicantsynth.model.Step
@@ -91,6 +101,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var showTempo by mutableStateOf(false)
     var showFxPicker by mutableStateOf(false)
     var showRecordings by mutableStateOf(false)
+    var showPresets by mutableStateOf(false)
+    var editorPad by mutableStateOf<Int?>(null)
+    var midiCursor by mutableIntStateOf(0)
+    var midiLength by mutableIntStateOf(1)
+    var midiVelocity by mutableIntStateOf(100)
+    var apcOctave by mutableIntStateOf(0)
     var masterRecording by mutableStateOf(false)
     var stemRecordingPad by mutableStateOf<Int?>(null)
     var recordingSeconds by mutableFloatStateOf(0f)
@@ -167,16 +183,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 engine.clearClip(clip.index)
                 continue
             }
-            engine.configureClip(clip)
-            if (clip.kind == ClipKind.DRUMS) {
-                for (voice in 0 until ClipLimits.DRUM_VOICES) {
-                    for (step in 0 until ClipLimits.STEPS) {
-                        engine.setDrumStep(clip, voice, step)
-                    }
-                }
-            } else if (clip.kind == ClipKind.ACID || clip.kind == ClipKind.WAVE) {
-                for (step in 0 until ClipLimits.STEPS) engine.setStep(clip, step)
-            }
+            syncClipPattern(clip)
             padRuntime[clip.index].value = PadRuntime(
                 kind = clip.kind.ordinal,
                 state = 0,
@@ -184,6 +191,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 mute = clip.mute,
                 solo = clip.solo,
             )
+        }
+    }
+
+    /** Push a clip's config plus whichever pattern model its engine uses. */
+    private fun syncClipPattern(clip: Clip) {
+        engine.configureClip(clip)
+        when (clip.kind) {
+            ClipKind.DRUMS -> {
+                for (voice in 0 until ClipLimits.DRUM_VOICES) {
+                    for (step in 0 until ClipLimits.STEPS) {
+                        engine.setDrumStep(clip, voice, step)
+                    }
+                }
+            }
+            ClipKind.ACID -> {
+                for (step in 0 until ClipLimits.STEPS) engine.setStep(clip, step)
+            }
+            ClipKind.WAVE -> {
+                for (step in 0 until ClipLimits.STEPS) engine.setStep(clip, step)
+                engine.clearMidiNotes(clip.index)
+                clip.midiNotes.forEach { engine.setMidiNote(clip, it) }
+            }
+            else -> Unit
         }
     }
 
@@ -373,16 +403,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (kind == ClipKind.EMPTY) {
             engine.clearClip(pad)
         } else {
-            engine.configureClip(clip)
-            if (kind == ClipKind.DRUMS) {
-                for (voice in 0 until ClipLimits.DRUM_VOICES) {
-                    for (step in 0 until ClipLimits.STEPS) {
-                        engine.setDrumStep(clip, voice, step)
-                    }
-                }
-            } else {
-                for (step in 0 until ClipLimits.STEPS) engine.setStep(clip, step)
-            }
+            syncClipPattern(clip)
         }
         selectedTab = 0
         scheduleSave()
@@ -488,11 +509,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             for (step in 0 until ClipLimits.STEPS) engine.setStep(clip, step)
         }
+        if (clip.kind == ClipKind.WAVE) {
+            clip.midiNotes = clip.midiNotes.map {
+                it.copy(note = (it.note + semitones).coerceIn(0, 127))
+            }
+            engine.clearMidiNotes(clip.index)
+            clip.midiNotes.forEach { engine.setMidiNote(clip, it) }
+        }
         scheduleSave()
     }
 
     fun clearPattern(clip: Clip) {
         clip.steps = List(ClipLimits.STEPS) { Step() }
+        clip.midiNotes = emptyList()
+        engine.clearMidiNotes(clip.index)
         clip.drumMask = IntArray(ClipLimits.DRUM_VOICES)
         for (step in 0 until ClipLimits.STEPS) engine.setStep(clip, step)
         for (voice in 0 until ClipLimits.DRUM_VOICES) {
@@ -504,11 +534,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun randomizePattern(clip: Clip) {
         val random = Random(System.nanoTime())
         val scale = intArrayOf(0, 2, 3, 5, 7, 8, 10, 12)
-        if (clip.kind == ClipKind.ACID || clip.kind == ClipKind.WAVE) {
-            val density = if (clip.kind == ClipKind.ACID) 0.46f else 0.32f
+        if (clip.kind == ClipKind.ACID) {
             val steps = MutableList(ClipLimits.STEPS) { Step() }
             for (i in 0 until ClipLimits.STEPS) {
-                if (random.nextFloat() < density) {
+                if (random.nextFloat() < 0.46f) {
                     val offset = scale[random.nextInt(scale.size)] + 12 * random.nextInt(2)
                     val accent = random.nextFloat() < 0.18f
                     steps[i] = Step(
@@ -516,12 +545,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         note = (clip.root + offset).coerceIn(0, 127),
                         velocity = if (accent) 118 else 94,
                         accent = accent,
-                        slide = clip.kind == ClipKind.ACID && random.nextFloat() < 0.14f,
+                        slide = random.nextFloat() < 0.14f,
                     )
                 }
             }
             clip.steps = steps
             for (i in 0 until ClipLimits.STEPS) engine.setStep(clip, i)
+        } else if (clip.kind == ClipKind.WAVE) {
+            clip.steps = List(ClipLimits.STEPS) { Step() }
+            val notes = mutableListOf<MidiNote>()
+            for (i in 0 until ClipLimits.STEPS) {
+                if (random.nextFloat() < 0.32f) {
+                    val offset = scale[random.nextInt(scale.size)] + 12 * random.nextInt(2)
+                    notes += MidiNote(
+                        note = (clip.root + offset).coerceIn(0, 127),
+                        start = i,
+                        length = if (random.nextFloat() < 0.35f) 2 else 1,
+                        velocity = if (random.nextFloat() < 0.2f) 118 else 94,
+                    )
+                }
+            }
+            clip.midiNotes = notes
+            syncClipPattern(clip)
         } else if (clip.kind == ClipKind.DRUMS) {
             val densities = floatArrayOf(0.28f, 0.16f, 0.08f, 0.08f, 0.08f, 0.06f, 0.1f, 0.42f, 0.1f, 0.06f, 0.08f)
             val masks = IntArray(ClipLimits.DRUM_VOICES)
@@ -556,6 +601,134 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         clip.sampleName = null
         clip.sampleMissing = false
         scheduleSave()
+    }
+
+    // MIDI piano roll -----------------------------------------------------------
+
+    fun openEditor(pad: Int) {
+        val target = pad.coerceIn(0, ClipLimits.PADS - 1)
+        selectPad(target, 2)
+        midiCursor = 0
+        val selected = project.clips[target]
+        if (selected.kind == ClipKind.WAVE && selected.length != ClipLimits.STEPS) {
+            selected.length = ClipLimits.STEPS
+            syncClipPattern(selected)
+        }
+        if (project.clips[target].kind == ClipKind.WAVE && project.clips[target].midiNotes.isEmpty()) {
+            // Seed the roll with the legacy 16-step line the first time it opens.
+            val clip = project.clips[target]
+            val converted = clip.steps.mapIndexedNotNull { index, step ->
+                if (step.gate) MidiNote(step.note, index, 1, step.velocity) else null
+            }
+            if (converted.isNotEmpty()) {
+                clip.midiNotes = converted
+                clip.steps = List(ClipLimits.STEPS) { Step() }
+                syncClipPattern(clip)
+                scheduleSave()
+            }
+        }
+        editorPad = target
+    }
+
+    fun closeEditor() {
+        editorPad = null
+    }
+
+    fun moveMidiCursor(step: Int) {
+        midiCursor = step.coerceIn(0, ClipLimits.STEPS - 1)
+    }
+
+    fun chooseMidiLength(steps: Int) {
+        midiLength = steps.coerceIn(1, ClipLimits.STEPS)
+    }
+
+    fun chooseMidiVelocity(velocity: Int) {
+        midiVelocity = velocity.coerceIn(1, 127)
+    }
+
+    fun addMidiNote(
+        clip: Clip,
+        note: Int,
+        start: Int = midiCursor,
+        length: Int = midiLength,
+        velocity: Int = midiVelocity,
+        advance: Boolean = true,
+    ) {
+        if (clip.kind != ClipKind.WAVE) return
+        val entry = clip.addMidiNote(note, start, length, velocity)
+        engine.setMidiNote(clip, entry)
+        val pad = clip.index
+        viewModelScope.launch {
+            engine.previewNote(pad, entry.note, entry.velocity, true)
+            delay(280)
+            engine.previewNote(pad, entry.note, 0, false)
+        }
+        if (advance) midiCursor = (entry.start + entry.length).mod(ClipLimits.STEPS)
+        scheduleSave()
+    }
+
+    fun removeMidiNote(clip: Clip, note: Int, start: Int) {
+        if (clip.kind != ClipKind.WAVE) return
+        clip.removeMidiNote(note, start)
+        engine.setMidiNote(clip, MidiNote(note, start), on = false)
+        scheduleSave()
+    }
+
+    fun clearMidiNotes(clip: Clip) {
+        clip.clearMidiNotes()
+        engine.clearMidiNotes(clip.index)
+        scheduleSave()
+    }
+
+    fun convertStepsToMidi(clip: Clip) {
+        if (clip.kind != ClipKind.WAVE) return
+        clip.midiNotes = clip.steps.mapIndexedNotNull { index, step ->
+            if (step.gate) MidiNote(step.note, index, 1, step.velocity) else null
+        }
+        clip.steps = List(ClipLimits.STEPS) { Step() }
+        syncClipPattern(clip)
+        scheduleSave()
+        message = "Converted ${clip.midiNotes.size} steps to MIDI notes"
+    }
+
+    fun setApcNoteInput(enabled: Boolean) {
+        midi.setNoteInput(enabled)
+        message = if (enabled) "APC64 keys → piano roll" else "APC64 pads → clip grid"
+    }
+
+    fun nudgeApcOctave(octave: Int) {
+        apcOctave = octave.coerceIn(-2, 2)
+    }
+
+    // Presets -------------------------------------------------------------------
+
+    fun browsePresets() {
+        if (selectedClip.kind == ClipKind.EMPTY) {
+            message = "Assign an engine first"
+            return
+        }
+        showPresets = true
+    }
+
+    fun applyPreset(preset: Any) {
+        val clip = selectedClip
+        when (preset) {
+            is WavePreset -> if (clip.kind == ClipKind.WAVE) clip.applyWavePreset(preset)
+            is AcidPreset -> if (clip.kind == ClipKind.ACID) clip.applyAcidPreset(preset)
+            is DrumPreset -> if (clip.kind == ClipKind.DRUMS) clip.applyDrumPreset(preset)
+            else -> return
+        }
+        syncClipPattern(clip)
+        showPresets = false
+        scheduleSave()
+        message = "${clip.name} loaded"
+    }
+
+    fun presetCount(kind: ClipKind): Int = when (kind) {
+        ClipKind.ACID -> AcidPresets.COUNT
+        ClipKind.WAVE -> WAVE_PRESETS.size
+        ClipKind.DRUMS -> DrumPresets.all.size
+        else -> 0
     }
 
     // Sample import -------------------------------------------------------------
@@ -754,6 +927,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleMidi(event: Apc64Event) {
         when (event) {
+            is Apc64Event.Key -> {
+                val pad = editorPad ?: selectedPad
+                val clip = project.clips[pad.coerceIn(0, ClipLimits.PADS - 1)]
+                if (clip.kind != ClipKind.WAVE) return
+                val note = (event.note + apcOctave * 12).coerceIn(0, 127)
+                if (event.pressed) {
+                    addMidiNote(clip, note, velocity = event.velocity)
+                } else {
+                    engine.previewNote(clip.index, note, 0, false)
+                }
+            }
             is Apc64Event.Pad -> if (event.pressed) togglePad(event.pad)
             is Apc64Event.Scene -> launchScene(event.row)
             is Apc64Event.Transport -> when (event.action) {

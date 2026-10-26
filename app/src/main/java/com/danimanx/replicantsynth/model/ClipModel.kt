@@ -27,6 +27,21 @@ data class Step(
     val slide: Boolean = false,
 )
 
+/**
+ * A free MIDI note for the ReplicantWave piano roll. [start] and [length] are
+ * 16th-note steps inside the clip (0..15), so a note can sustain across steps
+ * and several notes can sound at once.
+ */
+data class MidiNote(
+    val note: Int = 60,
+    val start: Int = 0,
+    val length: Int = 1,
+    val velocity: Int = 100,
+) {
+    val id: Int get() = (note shl 8) or (start and 0xFF)
+    val end: Int get() = start + length
+}
+
 object AcidParam {
     const val WAVE = 0
     const val CUTOFF = 1
@@ -87,6 +102,7 @@ object ClipLimits {
     const val STEPS = 16
     const val DRUM_VOICES = 11
     const val PARAMS = 32
+    const val MAX_MIDI_NOTES = 96
     const val COLS = 8
     const val ROWS = 8
 }
@@ -131,6 +147,7 @@ class Clip(val index: Int) {
     var mute by mutableStateOf(false)
     var solo by mutableStateOf(false)
     var steps by mutableStateOf(List(ClipLimits.STEPS) { Step() })
+    var midiNotes by mutableStateOf<List<MidiNote>>(emptyList())
     var drumMask by mutableStateOf(IntArray(ClipLimits.DRUM_VOICES))
     var drumVel by mutableStateOf(IntArray(ClipLimits.DRUM_VOICES * ClipLimits.STEPS) { 100 })
     var sampleLoop by mutableStateOf(true)
@@ -163,6 +180,44 @@ class Clip(val index: Int) {
     fun setStep(index: Int, step: Step) {
         if (index !in 0 until ClipLimits.STEPS) return
         updateSteps(steps.toMutableList().also { it[index] = step })
+    }
+
+    fun midiNoteAt(note: Int, start: Int): MidiNote? =
+        midiNotes.firstOrNull { it.note == note && it.start == start }
+
+    fun addMidiNote(note: Int, start: Int, length: Int, velocity: Int): MidiNote {
+        val loop = this.length.coerceIn(1, ClipLimits.STEPS)
+        val safeStart = start.coerceIn(0, loop - 1)
+        val safeLength = length.coerceIn(1, loop - safeStart)
+        val entry = MidiNote(
+            note = note.coerceIn(0, 127),
+            start = safeStart,
+            length = safeLength,
+            velocity = velocity.coerceIn(1, 127),
+        )
+        midiNotes = midiNotes.filterNot { it.note == entry.note && it.start == entry.start } + entry
+        midiNotes = midiNotes.sortedWith(compareBy({ it.start }, { it.note }))
+        return entry
+    }
+
+    fun removeMidiNote(note: Int, start: Int) {
+        midiNotes = midiNotes.filterNot { it.note == note && it.start == start }
+    }
+
+    fun updateMidiNote(
+        note: Int,
+        start: Int,
+        newNote: Int = note,
+        newStart: Int = start,
+        newLength: Int = 1,
+        newVelocity: Int = 100,
+    ) {
+        removeMidiNote(note, start)
+        addMidiNote(newNote, newStart, newLength, newVelocity)
+    }
+
+    fun clearMidiNotes() {
+        midiNotes = emptyList()
     }
 
     fun drumOn(voice: Int, step: Int): Boolean {
@@ -225,6 +280,7 @@ fun applyKindDefaults(clip: Clip, kind: ClipKind) {
     clip.mute = false
     clip.solo = false
     clip.sampleMissing = false
+    clip.midiNotes = emptyList()
     if (clip.name.isBlank() || clip.name == previousDefault) {
         clip.name = defaultName(kind, clip.index)
     }
@@ -294,17 +350,17 @@ fun applyKindDefaults(clip: Clip, kind: ClipKind) {
             p[WaveParam.FILTER_MODE] = 0f
             p[WaveParam.CHORD] = 2f
             clip.params = p
-            val notes = intArrayOf(0, 3, 7, 12)
-            val gates = intArrayOf(0, 4, 8, 12)
-            val steps = MutableList(ClipLimits.STEPS) { Step() }
-            gates.forEachIndexed { i, step ->
-                steps[step] = Step(
-                    gate = true,
-                    note = (clip.root + notes[i]).coerceIn(0, 127),
+            clip.steps = List(ClipLimits.STEPS) { Step() }
+            val offsets = intArrayOf(0, 3, 7, 12)
+            val starts = intArrayOf(0, 4, 8, 12)
+            clip.midiNotes = starts.mapIndexed { i, step ->
+                MidiNote(
+                    note = (clip.root + offsets[i]).coerceIn(0, 127),
+                    start = step,
+                    length = 4,
                     velocity = 100,
                 )
             }
-            clip.steps = steps
             clip.name = "WAVE ${(clip.index + 1).toString().padStart(2, '0')}"
         }
         ClipKind.DRUMS -> {

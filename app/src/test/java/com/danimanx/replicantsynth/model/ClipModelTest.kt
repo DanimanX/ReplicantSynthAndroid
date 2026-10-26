@@ -50,6 +50,20 @@ class ClipModelTest {
     }
 
     @Test
+    fun midiNotesClampToTheClipLoop() {
+        val clip = Clip(0)
+        applyKindDefaults(clip, ClipKind.WAVE)
+        clip.midiNotes = emptyList()
+        clip.length = 8
+        val note = clip.addMidiNote(note = 60, start = 12, length = 8, velocity = 100)
+        assertEquals(7, note.start)
+        assertEquals(1, note.length)
+        assertEquals(1, clip.midiNotes.size)
+        clip.removeMidiNote(60, 7)
+        assertTrue(clip.midiNotes.isEmpty())
+    }
+
+    @Test
     fun transposeMovesRootAndSteps() {
         val clip = Clip(3)
         applyKindDefaults(clip, ClipKind.ACID)

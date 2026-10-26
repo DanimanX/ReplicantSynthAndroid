@@ -235,10 +235,33 @@ private fun SoundTab(vm: MainViewModel, clip: Clip) {
             )
             ImportButton(vm, clip, full = true)
         }
-        ClipKind.ACID -> AcidSound(vm, clip)
-        ClipKind.WAVE -> WaveSound(vm, clip)
-        ClipKind.DRUMS -> DrumSound(vm, clip)
+        ClipKind.ACID -> {
+            PresetBar(vm, clip, Amber)
+            AcidSound(vm, clip)
+        }
+        ClipKind.WAVE -> {
+            PresetBar(vm, clip, Cyan)
+            WaveSound(vm, clip)
+        }
+        ClipKind.DRUMS -> {
+            PresetBar(vm, clip, Magenta)
+            DrumSound(vm, clip)
+        }
         ClipKind.SAMPLE -> SampleSound(vm, clip)
+    }
+}
+
+@Composable
+internal fun PresetBar(vm: MainViewModel, clip: Clip, color: Color) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MonoLabel("FACTORY PRESETS", color = TextDim, size = 8)
+        Spacer(Modifier.weight(1f))
+        MonoLabel("${vm.presetCount(clip.kind)} AVAILABLE", color = TextDim, size = 8)
+        LedButton("BROWSE", active = false, color = color) { vm.browsePresets() }
     }
 }
 
@@ -581,7 +604,7 @@ private fun FxTab(vm: MainViewModel, clip: Clip) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun PatternTab(vm: MainViewModel, clip: Clip) {
+internal fun PatternTab(vm: MainViewModel, clip: Clip) {
     if (clip.kind == ClipKind.EMPTY) {
         Text("Assign an engine to edit a clip.", color = TextMid, fontSize = 12.sp)
         return
@@ -594,6 +617,10 @@ private fun PatternTab(vm: MainViewModel, clip: Clip) {
             modifier = Modifier.padding(vertical = 8.dp),
         )
         ImportButton(vm, clip, full = true)
+        return
+    }
+    if (clip.kind == ClipKind.WAVE) {
+        WaveMidiEditor(vm, clip)
         return
     }
 
@@ -684,7 +711,7 @@ private fun PatternTab(vm: MainViewModel, clip: Clip) {
 }
 
 @Composable
-private fun StepGrid(
+internal fun StepGrid(
     vm: MainViewModel,
     clip: Clip,
     selected: Int,
@@ -761,7 +788,7 @@ private fun StepGrid(
 }
 
 @Composable
-private fun DrumGrid(vm: MainViewModel, clip: Clip) {
+internal fun DrumGrid(vm: MainViewModel, clip: Clip) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         for (voice in 0 until ClipLimits.DRUM_VOICES) {
             Row(

@@ -12,7 +12,7 @@
 namespace {
 
 constexpr const char* kTag = "ReplicantSynthJNI";
-constexpr const char* kVersion = "ReplicantSynth 0.0.1";
+constexpr const char* kVersion = "ReplicantSynth 0.0.2";
 
 struct EngineHandle {
     rep::ClipEngine engine;
@@ -186,6 +186,29 @@ Java_com_danimanx_replicantsynth_audio_NativeEngine_nativeSetDrumStep(
     jint velocity) {
     if (EngineHandle* h = handleOf(handle)) {
         h->engine.setDrumStep(pad, voice, step, on == JNI_TRUE, velocity);
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_danimanx_replicantsynth_audio_NativeEngine_nativeSetMidiNote(
+    JNIEnv*, jobject, jlong handle, jint pad, jboolean on, jint note, jint start,
+    jint length, jint velocity) {
+    if (EngineHandle* h = handleOf(handle)) {
+        h->engine.setMidiNote(pad, on == JNI_TRUE, note, start, length, velocity);
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_danimanx_replicantsynth_audio_NativeEngine_nativeClearMidiNotes(
+    JNIEnv*, jobject, jlong handle, jint pad) {
+    if (EngineHandle* h = handleOf(handle)) h->engine.clearMidiNotes(pad);
+}
+
+JNIEXPORT void JNICALL
+Java_com_danimanx_replicantsynth_audio_NativeEngine_nativePreviewNote(
+    JNIEnv*, jobject, jlong handle, jint pad, jboolean on, jint note, jint velocity) {
+    if (EngineHandle* h = handleOf(handle)) {
+        h->engine.previewNote(pad, on == JNI_TRUE, note, velocity);
     }
 }
 

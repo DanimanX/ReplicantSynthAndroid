@@ -57,6 +57,7 @@ import com.danimanx.replicantsynth.audio.AudioStats
 import com.danimanx.replicantsynth.midi.Apc64State
 import com.danimanx.replicantsynth.model.ClipKind
 import com.danimanx.replicantsynth.model.quantizeLabel
+import com.danimanx.replicantsynth.ui.components.ClipEditorDialog
 import com.danimanx.replicantsynth.ui.components.FxPickerDialog
 import com.danimanx.replicantsynth.ui.components.InspectorPanel
 import com.danimanx.replicantsynth.ui.components.LedButton
@@ -64,6 +65,7 @@ import com.danimanx.replicantsynth.ui.components.MeterBar
 import com.danimanx.replicantsynth.ui.components.MidiSheet
 import com.danimanx.replicantsynth.ui.components.MonoLabel
 import com.danimanx.replicantsynth.ui.components.PadDeck
+import com.danimanx.replicantsynth.ui.components.PresetBrowser
 import com.danimanx.replicantsynth.ui.components.ProjectMenuDialog
 import com.danimanx.replicantsynth.ui.components.RecordingsSheet
 import com.danimanx.replicantsynth.ui.components.TempoDialog
@@ -207,6 +209,8 @@ fun ReplicantApp(vm: MainViewModel) {
         if (vm.showRecordings) RecordingsSheet(vm)
         if (vm.showProjectMenu) ProjectMenuDialog(vm)
         if (vm.showTempo) TempoDialog(vm)
+        if (vm.editorPad != null) ClipEditorDialog(vm)
+        if (vm.showPresets) PresetBrowser(vm)
     }
 }
 
@@ -302,7 +306,7 @@ private fun Logo(compact: Boolean) {
                     .border(1.dp, Cyan.copy(alpha = 0.6f), RoundedCornerShape(5.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             ) {
-                MonoLabel("v0.0.1", color = Cyan, size = 8)
+                MonoLabel("v0.0.2", color = Cyan, size = 8)
             }
         }
     }

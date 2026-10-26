@@ -85,9 +85,9 @@ namespace Replicant909
 
         const float accentBoost = 1.0f + currentAccent * 0.5f;
         const float mixed = (shell * bodyGain + filteredNoise * snapEnv * snappyGain)
-                            * currentVelocity * accentBoost * level * 1.25f;
+                            * currentVelocity * accentBoost * level * 0.95f;
 
-        const float out = fastTanh(mixed * 1.35f);
+        const float out = fastTanh(mixed * 1.00f);
 
         envTime += dt;
         updatePeak(out);

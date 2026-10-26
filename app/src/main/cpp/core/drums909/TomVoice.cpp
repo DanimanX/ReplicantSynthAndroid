@@ -75,9 +75,9 @@ namespace Replicant909
         const float click = rng.next() * std::exp(-envTime * 175.0f) * 0.28f;
 
         const float accentBoost = 1.0f + currentAccent * 0.45f;
-        const float raw = (body * ampEnv + click) * currentVelocity * accentBoost * level * 1.35f;
+        const float raw = (body * ampEnv + click) * currentVelocity * accentBoost * level * 1.00f;
 
-        const float out = fastTanh(raw * 1.2f);
+        const float out = fastTanh(raw * 1.00f);
 
         envTime += dt;
         updatePeak(out);

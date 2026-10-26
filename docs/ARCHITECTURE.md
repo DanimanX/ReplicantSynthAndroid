@@ -66,7 +66,8 @@ rendering uses a blocking push so a fast host renderer cannot outrun the disk.
 
 64 pads are independent clip slots, mapped row-major from the top-left. Each
 slot stores its engine kind, root note, 16-step pattern, drum masks/velocities,
-synth parameters, FX type and six FX macros, mixer gain/pan/mute/solo.
+MIDI notes, synth parameters, FX type and six FX macros, mixer
+gain/pan/mute/solo.
 
 ### Timing
 
@@ -84,9 +85,28 @@ synth parameters, FX type and six FX macros, mixer gain/pan/mute/solo.
 | Kind | Implementation | Notes |
 | --- | --- | --- |
 | 303 | `core/Acid303.*` + `core/acid/*` | Port of the Replicant303 C++ voice: polyBLEP oscillator, diode ladder, capacitor slide, accent, five distortions. |
-| Wave | `core/Wavetable.*` | 8 banks × 16 frames × 7 mip levels, shared read-only tables, 6-voice poly per pad, up to 8 unison per voice, ZDF SVF, sub/noise, ADSR. |
+| Wave | `core/Wavetable.*` | 8 banks × 16 frames × 7 mip levels, shared read-only tables, 8-voice poly per pad, up to 8 unison per voice, ZDF SVF, sub/noise, ADSR. |
 | 909 | `core/DrumKit909.*` + `core/drums909/*` | Replicant909 voice models; 11 voices per clip, 6-bit PCM cymbal ROM generated procedurally, CH→OH choke. |
 | Sample | `ClipEngine::renderChunk` | Stereo float sample, linear interpolation, source-rate ratio, pitch, loop or one-shot. |
+
+### MIDI notes (ReplicantWave)
+
+Wave clips carry a second pattern model: up to 96 `MidiNote` events with
+`start`, `length`, `note` and `velocity`, all measured in 16th-note steps.
+`triggerMidiStep()` releases notes whose end step matches the current step and
+then starts notes anchored on it. `WaveSynth` starts one voice per key (or
+three in chord mode) and releases voices by their root key, so overlapping
+notes stay polyphonic. Clips with no MIDI notes keep the legacy 16-step gate
+pattern, which is converted to notes the first time the piano roll opens.
+
+### 909 gain staging
+
+Each voice keeps its own VCA / op-amp saturation, but the eleven voices are
+summed into a linear bus with a fixed 0.75 trim. The previous `tanh` on the
+sum compressed every transient (crest factor ≈ 1.7); the linear bus restores a
+crest factor above 3, and a transparent `softLimit()` only bends peaks above
+0.9. The same limiter replaces the master `tanh`, so a single clip is not
+pre-distorted by the safety stage.
 
 ### FX
 
@@ -103,7 +123,8 @@ when a pad selects a non-zero FX slot.
 ### Mixing and metering
 
 Post-FX pad signal → gain/balance → mute/solo → master sum → master gain →
-`tanh` guard. Per-pad peak and master peak are published once per block.
+`softLimit(0.9)` peak guard. Per-pad peak and master peak are published once
+per block.
 
 ## UI
 
@@ -112,6 +133,12 @@ Post-FX pad signal → gain/balance → mute/solo → master sum → master gain
   meter and step phase; queued pads blink.
 - `InspectorPanel` has SOUND / FX / PATTERN / MIX pages. Knobs are custom
   Canvas controls with vertical drag, 270° arcs and double-tap reset.
+- Double-tapping a pad opens `ClipEditorDialog`: a Canvas piano roll for Wave,
+  the step grid for 303, the kit grid for 909. The piano roll uses the same
+  engine note commands as the APC64 key input.
+- `PresetBrowser` exposes the ported factory banks. Applying a preset replaces
+  the engine parameters and pattern but keeps the clip's FX insert, macros and
+  mixer state.
 - The phone layout stacks the grid over a 334 dp inspector; widths above
   760 dp place the inspector beside the grid.
 - Sheets: FX browser (48 effects with search), MIDI/APC64, recordings,
@@ -127,10 +154,12 @@ happens on load, so a project restores after a process restart. Recordings are
 ## Tests
 
 - `host/engine_tests.cpp` compiles the real engine without Android/Oboe and
-  runs 36,103 assertions: table ranges, every engine, all 48 FX with defaults,
-  quantized start, scene transitions, sample playback, capture header/frames,
-  44.1 kHz re-prepare and peak bounds.
-- JVM tests cover WAV parsing, project JSON, APC64 mapping/LED palette/SysEx,
-  MIDI running status and fragmented SysEx.
+  runs 36,112 assertions: table ranges, every engine, 909 headroom and crest
+  factor, MIDI-note sustain/release, all 48 FX with defaults, quantized start,
+  scene transitions, sample playback, capture header/frames, 44.1 kHz
+  re-prepare and peak bounds.
+- JVM tests cover WAV parsing, project JSON (including MIDI notes), APC64
+  mapping/LED palette/SysEx, MIDI running status, fragmented SysEx, the 512
+  slot 303 generator and the three factory banks.
 - Emulator screenshots are captured by `tools/capture_screenshots.py`; the
   emulator is a UI/behaviour check, not a latency measurement.

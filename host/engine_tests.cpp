@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -175,6 +176,105 @@ void testAcid() {
     engine.getPadStates(states, 64);
     check(((states[0] >> 4) & 0xF) == static_cast<int>(rep::ClipState::Stopped),
           "panic stops acid");
+}
+
+void testDrumHeadroom() {
+    // Regression for the 909 bus: the kit used to re-tanh the summed voices,
+    // which squashed every transient (crest factor ~1.7) and sounded saturated.
+    rep::ClipEngine engine;
+    configureDrums(engine, 0);
+    engine.setQuantize(0);
+    engine.launchPad(0);
+    const double seconds = 4.0;
+    const Peaks peaks = render(engine, seconds);
+    const double frames = engine.sampleRate() * seconds;
+    const double rms = std::sqrt(peaks.energy / (2.0 * frames));
+    check(peaks.finite, "909 headroom finite");
+    check(peaks.peak < 0.95f, "909 headroom below limiter");
+    check(rms > 0.04, "909 headroom audible");
+    check(peaks.peak / std::max(1.0e-6, rms) > 2.6, "909 keeps transients (crest factor)");
+
+    rep::DrumKit909 kit;
+    kit.prepare(48000.0);
+    kit.setParams(0.5f, 0.5f, 0.5f, 0.5f, 1.0f, 1.2f, 18000.0f, 0.6f);
+    for (int v = 0; v < rep::DrumKit909::kVoices; ++v) kit.trigger(v, 1.0f, 1.0f);
+    float peak = 0.0f;
+    for (int i = 0; i < 48000; ++i) {
+        float l = 0.0f;
+        float r = 0.0f;
+        kit.render(l, r);
+        peak = std::max(peak, std::max(std::fabs(l), std::fabs(r)));
+    }
+    check(peak < 0.99f, "all eleven 909 voices stay under full scale");
+}
+
+void testMidiNotes() {
+    // A long note must sustain across steps instead of being cut every step.
+    rep::ClipEngine engine;
+    float p[32];
+    waveParams(p);
+    p[8] = 0.002f;   // attack
+    p[10] = 1.0f;    // sustain
+    p[11] = 0.005f;  // release
+    engine.configureClip(0, 2, 60, 16, 0.8f, 0.0f, 0, false, true, false, false, p, 32);
+    for (int i = 0; i < 16; ++i) engine.setStep(0, i, false, 60, 100, false, false);
+    engine.setMidiNote(0, true, 60, 0, 16, 110);
+    engine.setMidiNote(0, true, 64, 0, 16, 100);
+    engine.setTempo(120.0f);
+    engine.setQuantize(0);
+    engine.launchPad(0);
+    render(engine, 0.5); // step 4 of 16
+
+    float meters[64];
+    engine.getPadMeters(meters, 64);
+    check(meters[0] > 0.01f, "MIDI note sustains across steps");
+
+    // A note shorter than the clip releases on its end step. ClipEngine owns a
+    // 16k-command queue, so keep extra instances on the heap instead of
+    // stacking several multi-megabyte engines in one test frame.
+    auto shortNote = std::make_unique<rep::ClipEngine>();
+    shortNote->configureClip(1, 2, 60, 16, 0.8f, 0.0f, 0, false, true, false, false, p, 32);
+    for (int i = 0; i < 16; ++i) shortNote->setStep(1, i, false, 60, 100, false, false);
+    shortNote->setMidiNote(1, true, 60, 0, 2, 110);
+    shortNote->setTempo(120.0f);
+    shortNote->setQuantize(0);
+    shortNote->launchPad(1);
+    render(*shortNote, 0.75); // well past the 2-step gate
+    shortNote->getPadMeters(meters, 64);
+    check(meters[1] < 0.01f, "MIDI note releases at its end step");
+
+    // Per-key release: holding E while releasing C must keep E sounding.
+    rep::WaveSynth synth;
+    rep::WaveParams wp;
+    wp.attack = 0.001f;
+    wp.sustain = 1.0f;
+    wp.release = 0.01f;
+    wp.level = 0.8f;
+    synth.prepare(48000.0);
+    synth.setParams(wp);
+    synth.noteOn(60, 100);
+    synth.noteOn(64, 100);
+    float l = 0.0f;
+    float r = 0.0f;
+    for (int i = 0; i < 512; ++i) synth.render(l, r);
+    synth.noteOff(60);
+    float late = 0.0f;
+    for (int i = 0; i < 4096; ++i) {
+        synth.render(l, r);
+        if (i > 3800) late = std::max(late, std::max(std::fabs(l), std::fabs(r)));
+    }
+    check(late > 0.001f, "noteOff only releases its own key");
+    synth.noteOff(64);
+
+    // Auditioning a stopped clip must reach the output.
+    auto preview = std::make_unique<rep::ClipEngine>();
+    preview->configureClip(2, 2, 60, 16, 0.8f, 0.0f, 0, false, true, false, false, p, 32);
+    preview->previewNote(2, true, 60, 110);
+    render(*preview, 0.1);
+    preview->getPadMeters(meters, 64);
+    check(meters[2] > 0.001f, "stopped clip audition is audible");
+    preview->previewNote(2, false, 60, 0);
+    render(*preview, 0.1);
 }
 
 void testDrums() {
@@ -385,6 +485,8 @@ int main() {
     testBanks();
     testAcid();
     testDrums();
+    testDrumHeadroom();
+    testMidiNotes();
     testWave();
     testSample();
     testFxCatalog();

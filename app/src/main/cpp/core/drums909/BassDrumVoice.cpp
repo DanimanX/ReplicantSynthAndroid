@@ -87,10 +87,10 @@ namespace Replicant909
 
         // 6. Summing, Accent Dynamic Scaling, and Output Drive
         const float accentBoost = 1.0f + currentAccent * 0.45f;
-        const float rawOut = (body * ampEnv + click) * currentVelocity * accentBoost * level * 1.35f;
+        const float rawOut = (body * ampEnv + click) * currentVelocity * accentBoost * level * 1.00f;
 
         // Discrete op-amp soft clipping
-        const float out = fastTanh(rawOut * 1.25f);
+        const float out = fastTanh(rawOut * 1.00f);
 
         envTime += dt;
         updatePeak(out);

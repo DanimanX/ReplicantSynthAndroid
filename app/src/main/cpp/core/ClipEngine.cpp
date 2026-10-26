@@ -206,6 +206,39 @@ void ClipEngine::setDrumStep(int pad, int voice, int step, bool on, int velocity
     push(command);
 }
 
+void ClipEngine::setMidiNote(int pad, bool on, int note, int start, int length,
+                             int velocity) {
+    if (pad < 0 || pad >= kPads) return;
+    Command command;
+    command.type = kCmdMidiNote;
+    command.pad = static_cast<uint8_t>(pad);
+    command.flags = on ? 1 : 0;
+    command.note = static_cast<int16_t>(clampi(note, 0, 127));
+    command.step = static_cast<int16_t>(clampi(start, 0, kSteps - 1));
+    command.length = static_cast<int16_t>(clampi(length, 1, kSteps));
+    command.velocity = static_cast<int16_t>(clampi(velocity, 1, 127));
+    push(command);
+}
+
+void ClipEngine::clearMidiNotes(int pad) {
+    if (pad < 0 || pad >= kPads) return;
+    Command command;
+    command.type = kCmdClearMidi;
+    command.pad = static_cast<uint8_t>(pad);
+    push(command);
+}
+
+void ClipEngine::previewNote(int pad, bool on, int note, int velocity) {
+    if (pad < 0 || pad >= kPads) return;
+    Command command;
+    command.type = kCmdPreview;
+    command.pad = static_cast<uint8_t>(pad);
+    command.flags = on ? 1 : 0;
+    command.note = static_cast<int16_t>(clampi(note, 0, 127));
+    command.velocity = static_cast<int16_t>(clampi(velocity, 1, 127));
+    push(command);
+}
+
 void ClipEngine::clearClip(int pad) {
     if (pad < 0 || pad >= kPads) return;
     Command command;
@@ -363,6 +396,38 @@ void ClipEngine::drainCommands() {
                 }
                 break;
             }
+            case kCmdMidiNote:
+                applyMidiNote(clip, command);
+                break;
+            case kCmdClearMidi: {
+                for (auto& note : clip.midi) note.active = false;
+                if (clip.state == static_cast<int>(ClipState::Playing)) {
+                    clip.wave->allNotesOff();
+                }
+                break;
+            }
+            case kCmdPreview: {
+                const bool on = (command.flags & 1) != 0;
+                // Auditioning happens on stopped clips too, so keep the pad in
+                // the mixer for a moment instead of skipping it as inactive.
+                if (on && clip.state != static_cast<int>(ClipState::Playing)) {
+                    clip.tailSamples = std::max(clip.tailSamples, sampleRate_ * 1.5);
+                }
+                if (clip.kind == static_cast<int>(ClipKind::Wave)) {
+                    if (on) clip.wave->noteOn(command.note, command.velocity);
+                    else clip.wave->noteOff(command.note);
+                } else if (clip.kind == static_cast<int>(ClipKind::Acid)) {
+                    if (on) clip.acid->noteOn(command.note, command.velocity);
+                    else clip.acid->noteOff(command.note);
+                } else if (clip.kind == static_cast<int>(ClipKind::Drums) && on) {
+                    const int voice = Replicant909::midiNoteToInstrument(command.note);
+                    if (voice >= 0) {
+                        clip.drums->trigger(voice, static_cast<float>(command.velocity) / 127.0f,
+                                            0.0f);
+                    }
+                }
+                break;
+            }
             case kCmdLaunch: {
                 if (clip.kind == static_cast<int>(ClipKind::Empty)) break;
                 if (clip.kind == static_cast<int>(ClipKind::Sample) &&
@@ -484,6 +549,7 @@ void ClipEngine::drainCommands() {
                 clip.fxType = 0;
                 clip.sampleLoop = true;
                 for (auto& s : clip.steps) s = ClipStep{};
+                for (auto& note : clip.midi) note.active = false;
                 for (auto& mask : clip.drumMask) mask = 0;
                 for (auto& row : clip.drumVel) {
                     for (auto& v : row) v = 0;
@@ -512,6 +578,7 @@ void ClipEngine::applyConfigure(Clip& clip, int pad, const Command& command) {
         clip.pendingStart = clip.pendingStop = -1;
         clip.lastNote = -1;
         for (auto& step : clip.steps) step = ClipStep{};
+        for (auto& note : clip.midi) note.active = false;
         for (auto& mask : clip.drumMask) mask = 0;
         for (auto& row : clip.drumVel) {
             for (auto& v : row) v = 0;
@@ -588,6 +655,44 @@ void ClipEngine::applyParams(Clip& clip, int pad, const Command& command) {
         fx->setEnabled(clip.fxEnabled && clip.fxType != kFxIdBypass);
     }
     updatePadState(pad);
+}
+
+void ClipEngine::applyMidiNote(Clip& clip, const Command& command) {
+    if (clip.kind != static_cast<int>(ClipKind::Wave)) return;
+    const int note = clampi(command.note, 0, 127);
+    const int start = clampi(command.step, 0, std::max(0, clip.length - 1));
+    const int length = clampi(command.length, 1, std::max(1, clip.length - start));
+
+    if ((command.flags & 1) == 0) {
+        for (auto& entry : clip.midi) {
+            if (!entry.active || entry.note != note || entry.start != start) continue;
+            entry.active = false;
+            if (clip.state == static_cast<int>(ClipState::Playing)) {
+                clip.wave->noteOff(note);
+            }
+        }
+        return;
+    }
+
+    // One note per pitch/start cell: re-tapping a cell updates its length.
+    for (auto& entry : clip.midi) {
+        if (entry.active && entry.note == note && entry.start == start) {
+            entry.velocity = static_cast<uint8_t>(clampi(command.velocity, 1, 127));
+            entry.length = static_cast<uint8_t>(length);
+            return;
+        }
+    }
+    for (auto& entry : clip.midi) {
+        if (entry.active) continue;
+        entry.active = true;
+        entry.note = static_cast<uint8_t>(note);
+        entry.velocity = static_cast<uint8_t>(clampi(command.velocity, 1, 127));
+        entry.start = static_cast<uint8_t>(start);
+        entry.length = static_cast<uint8_t>(length);
+        // MIDI editing replaces the legacy step pattern for this clip.
+        for (auto& step : clip.steps) step.gate = false;
+        return;
+    }
 }
 
 void ClipEngine::applyVoiceParams(Clip& clip) {
@@ -753,15 +858,42 @@ void ClipEngine::triggerStep(Clip& clip, int step) {
             clip.lastNote = -1;
         }
     } else if (clip.kind == static_cast<int>(ClipKind::Wave)) {
-        const ClipStep& cs = clip.steps[s];
-        clip.wave->allNotesOff();
-        if (cs.gate) clip.wave->noteOn(cs.note, cs.velocity);
+        bool hasMidi = false;
+        for (const auto& note : clip.midi) {
+            if (note.active) {
+                hasMidi = true;
+                break;
+            }
+        }
+        if (hasMidi) {
+            triggerMidiStep(clip, s);
+        } else {
+            const ClipStep& cs = clip.steps[s];
+            clip.wave->allNotesOff();
+            if (cs.gate) clip.wave->noteOn(cs.note, cs.velocity);
+        }
     } else if (clip.kind == static_cast<int>(ClipKind::Drums)) {
         for (int v = 0; v < kDrumVoices; ++v) {
             if ((clip.drumMask[v] & (1u << s)) == 0) continue;
             const int velocity = clip.drumVel[v][s];
             const float accent = velocity >= 100 ? 0.85f : 0.0f;
             clip.drums->trigger(v, static_cast<float>(velocity) / 127.0f, accent);
+        }
+    }
+}
+
+void ClipEngine::triggerMidiStep(Clip& clip, int step) {
+    const int loop = std::max(1, clip.length);
+    // Releases first: a note ending here can be retriggered on the same step.
+    for (const auto& note : clip.midi) {
+        if (!note.active) continue;
+        const int span = clampi(note.length, 1, loop);
+        const int endStep = (note.start + span) % loop;
+        if (endStep == step) clip.wave->noteOff(note.note);
+    }
+    for (const auto& note : clip.midi) {
+        if (note.active && note.start == step) {
+            clip.wave->noteOn(note.note, note.velocity);
         }
     }
 }
@@ -951,8 +1083,10 @@ void ClipEngine::renderChunk(float* out, int frames, float* padOut) {
             }
         }
 
-        mixL = std::tanh(mixL * masterGain);
-        mixR = std::tanh(mixR * masterGain);
+        // Master guard: transparent below 0.9, so a single 909 or 303 clip is
+        // not pre-distorted by the safety stage; only real overload is bent.
+        mixL = softLimit(mixL * masterGain);
+        mixR = softLimit(mixR * masterGain);
         out[i * 2] = sanitize(static_cast<float>(mixL));
         out[i * 2 + 1] = sanitize(static_cast<float>(mixR));
         if (padOut != nullptr) {

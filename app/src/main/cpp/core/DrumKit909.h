@@ -38,6 +38,9 @@ public:
 
 private:
     std::array<std::unique_ptr<Replicant909::VoiceBase>, kVoices> voices_{};
+    // Headroom trim for the summed voice bus (see render()).
+    static constexpr float kKitTrim = 0.75f;
+
     std::array<float, kVoices> baseLevel_{};
     std::array<float, kVoices> pan_{};
     ZdfSvf filterL_;

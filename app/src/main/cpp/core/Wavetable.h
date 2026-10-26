@@ -59,7 +59,7 @@ struct WaveParams {
 
 class WaveSynth {
 public:
-    static constexpr int kVoices = 6;
+    static constexpr int kVoices = 8;
     static constexpr int kUnison = 8;
 
     WaveSynth();
@@ -76,6 +76,7 @@ private:
         bool active = false;
         bool held = false;
         int note = 60;
+        int rootNote = 60;
         float velocity = 0.8f;
         uint32_t age = 0;
         float phase[kUnison] = {};
@@ -92,7 +93,7 @@ private:
     };
 
     void updateVoiceTuning(Voice& voice);
-    void startVoice(int note, int velocity);
+    void startVoice(int note, int velocity, int rootNote);
     int chordInterval(int chord, int index) const;
 
     double sampleRate_ = 48000.0;

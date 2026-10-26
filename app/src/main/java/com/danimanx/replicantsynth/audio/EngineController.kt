@@ -2,6 +2,7 @@ package com.danimanx.replicantsynth.audio
 
 import android.content.Context
 import com.danimanx.replicantsynth.model.Clip
+import com.danimanx.replicantsynth.model.MidiNote
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -221,6 +222,24 @@ class EngineController(context: Context) {
                 clip.drumVelocity(voice, step),
             )
         }
+    }
+
+    fun setMidiNote(clip: Clip, note: MidiNote, on: Boolean = true) = withHandle { local ->
+        NativeEngine.nativeSetMidiNote(
+            local,
+            clip.index,
+            on,
+            note.note,
+            note.start,
+            note.length,
+            note.velocity,
+        )
+    }
+
+    fun clearMidiNotes(pad: Int) = withHandle { NativeEngine.nativeClearMidiNotes(it, pad) }
+
+    fun previewNote(pad: Int, note: Int, velocity: Int, on: Boolean) = withHandle { local ->
+        NativeEngine.nativePreviewNote(local, pad, on, note, velocity)
     }
 
     fun clearClip(pad: Int) = withHandle { NativeEngine.nativeClearClip(it, pad) }

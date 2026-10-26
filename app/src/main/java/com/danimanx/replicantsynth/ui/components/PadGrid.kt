@@ -249,6 +249,7 @@ private fun PadCell(
                 onLongClick = {
                     vm.selectPad(pad, 2)
                 },
+                onDoubleClick = { vm.openEditor(pad) },
             )
             .padding(if (compact) 3.dp else 5.dp),
     ) {

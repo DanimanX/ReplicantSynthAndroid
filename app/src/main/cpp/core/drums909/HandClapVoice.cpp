@@ -69,10 +69,10 @@ namespace Replicant909
         const float bandpassed = clapFilter.bp;
 
         const float accentBoost = 1.0f + currentAccent * 0.45f;
-        const float raw = bandpassed * ampEnv * currentVelocity * accentBoost * level * 2.3f;
+        const float raw = bandpassed * ampEnv * currentVelocity * accentBoost * level * 1.00f;
 
         // VCA soft saturation
-        const float out = fastTanh(raw * 1.3f);
+        const float out = fastTanh(raw * 1.00f);
 
         envTime += dt;
         updatePeak(out);

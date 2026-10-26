@@ -100,8 +100,13 @@ void DrumKit909::render(float& outL, float& outR) {
         r = filterR_.process(r, cutoff_, resonance_, 0);
     }
 
-    outL = fastTanh(l * level_) * 0.85f;
-    outR = fastTanh(r * level_) * 0.85f;
+    // Each voice already carries its own VCA saturation. Summing eleven of
+    // them through another tanh squashed every transient into the same block
+    // (crest factor ~1.7) and that is what made the kit sound saturated. Keep
+    // the bus linear with fixed headroom and only catch overload peaks.
+    const float bus = level_ * kKitTrim;
+    outL = softLimit(l * bus);
+    outR = softLimit(r * bus);
 }
 
 bool DrumKit909::anyActive() const {

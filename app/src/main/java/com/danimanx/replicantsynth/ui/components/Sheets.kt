@@ -77,7 +77,7 @@ import com.danimanx.replicantsynth.ui.theme.TextMid
 import java.util.Locale
 
 @Composable
-private fun SheetFrame(
+internal fun SheetFrame(
     title: String,
     subtitle: String,
     onDismiss: () -> Unit,
@@ -320,10 +320,15 @@ fun MidiSheet(vm: MainViewModel) {
                 detail = "Note-on velocity palette on channel 6",
                 checked = state.ledFeedback,
             ) { vm.midi.setLedFeedback(it) }
+            SwitchRow(
+                label = "APC64 KEYS → PIANO ROLL",
+                detail = "Pads become keys; notes land at the amber cursor",
+                checked = state.noteInput,
+            ) { vm.setApcNoteInput(it) }
 
             SectionTitle("CONTROLS")
             Text(
-                "PADS         NOTES 0–63\nSCENES       NOTES 112–119\nPLAY/STOP    91 / 93\nRECORD       92\nCLIP STOP    111\nMUTE / SOLO  109 / 110\nENCODER      CC 90\nTOUCH 1–8    PB CH 1–8\nSTRIP 1      MASTER GAIN\nSTRIP 8      PAD GAIN\nSTRIP 2–7    FX PARAMS 1–6",
+                "PADS         NOTES 0–63 (CLIPS)\nPADS + KEYS  NOTES 0–63 (PIANO ROLL)\nSCENES       NOTES 112–119\nPLAY/STOP    91 / 93\nRECORD       92\nCLIP STOP    111\nMUTE / SOLO  109 / 110\nENCODER      CC 90\nTOUCH 1–8    PB CH 1–8\nSTRIP 1      MASTER GAIN\nSTRIP 8      PAD GAIN\nSTRIP 2–7    FX PARAMS 1–6",
                 color = TextMid,
                 fontFamily = Mono,
                 fontSize = 8.sp,
@@ -560,7 +565,7 @@ fun ProjectMenuDialog(vm: MainViewModel) {
                 LedButton("NEW PROJECT", false, Red) { confirmNew = true }
             }
             Spacer(Modifier.height(14.dp))
-            MonoLabel("REPLICANTSYNTH 0.0.1 · MIT", color = TextDim, size = 8)
+            MonoLabel("REPLICANTSYNTH 0.0.2 · MIT", color = TextDim, size = 8)
             MonoLabel(
                 "Replicant303 · ReplicantWave · Replicant909 · ReplicantFX",
                 color = TextDim,

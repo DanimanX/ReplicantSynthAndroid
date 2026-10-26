@@ -96,11 +96,16 @@ object DemoProject {
         p[WaveParam.FILTER_MODE] = 0f
         p[WaveParam.CHORD] = chord.toFloat()
         clip.params = p
-        val steps = MutableList(ClipLimits.STEPS) { Step() }
-        for (step in intArrayOf(0, 3, 6, 10, 14)) {
-            steps[step] = Step(gate = true, note = (root + (step % 7)).coerceIn(0, 127), velocity = 100)
+        // Wave clips are MIDI clips: seed the piano roll with a phrase.
+        clip.steps = List(ClipLimits.STEPS) { Step() }
+        clip.midiNotes = intArrayOf(0, 3, 6, 10, 14).map { step ->
+            MidiNote(
+                note = (root + (step % 7)).coerceIn(0, 127),
+                start = step,
+                length = 2,
+                velocity = 100,
+            )
         }
-        clip.steps = steps
         clip.applyFxDefaults(fx)
     }
 

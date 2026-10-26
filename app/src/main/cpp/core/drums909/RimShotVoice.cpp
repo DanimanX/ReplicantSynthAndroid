@@ -62,10 +62,10 @@ namespace Replicant909
                              + std::sin(phase3 * TWO_PI) * 0.90f;
 
         const float accentBoost = 1.0f + currentAccent * 0.50f;
-        const float raw = modalMix * env * currentVelocity * accentBoost * level * 2.1f;
+        const float raw = modalMix * env * currentVelocity * accentBoost * level * 1.00f;
 
         // Vintage diode limiter / soft clipper gives the crack
-        const float out = fastTanh(raw * 1.4f);
+        const float out = fastTanh(raw * 1.00f);
 
         envTime += dt;
         updatePeak(out);

@@ -27,12 +27,15 @@ data class Apc64State(
     val padBaseNote: Int = Apc64Codec.PAD_BASE_DAW,
     val flipRows: Boolean = true,
     val ledFeedback: Boolean = true,
+    val noteInput: Boolean = false,
 ) {
     val connected: Boolean get() = connectedId != null
 }
 
 sealed class Apc64Event {
     data class Pad(val pad: Int, val velocity: Int, val pressed: Boolean) : Apc64Event()
+    /** Raw key from the APC64 Notes/Chord surface, used by the piano roll. */
+    data class Key(val note: Int, val velocity: Int, val pressed: Boolean) : Apc64Event()
     data class Scene(val row: Int) : Apc64Event()
     data class Transport(val action: TransportAction) : Apc64Event()
     data class Encoder(val delta: Int) : Apc64Event()
@@ -70,6 +73,7 @@ class Apc64Controller(
             padBaseNote = prefs.getInt("padBase", Apc64Codec.PAD_BASE_DAW),
             flipRows = prefs.getBoolean("flipRows", true),
             ledFeedback = prefs.getBoolean("ledFeedback", true),
+            noteInput = prefs.getBoolean("noteInput", false),
         ),
     )
     val state: StateFlow<Apc64State> = _state.asStateFlow()
@@ -264,6 +268,18 @@ class Apc64Controller(
         ledCache.fill(-1)
     }
 
+    /** Notes mode: pad-range note messages become piano-roll keys, not clips. */
+    fun setNoteInput(enabled: Boolean) {
+        prefs.edit().putBoolean("noteInput", enabled).apply()
+        _state.update { it.copy(noteInput = enabled) }
+        if (enabled) {
+            for (note in 0 until Apc64Codec.PAD_COUNT) {
+                send(Apc64Codec.led(note, Apc64Codec.COLOR_BLUE, Apc64Codec.LED_HALF))
+            }
+        }
+        ledCache.fill(-1)
+    }
+
     fun setLedFeedback(enabled: Boolean) {
         prefs.edit().putBoolean("ledFeedback", enabled).apply()
         _state.update { it.copy(ledFeedback = enabled) }
@@ -369,42 +385,74 @@ class Apc64Controller(
             if (summary.isNotBlank()) _state.update { it.copy(lastMessage = summary) }
             when (message) {
                 is MidiMessage.NoteOn -> {
-                    val pad = Apc64Codec.padForNote(
-                        message.note, current.padBaseNote, current.flipRows,
-                    )
-                    if (pad != null) {
-                        onEvent(Apc64Event.Pad(pad, message.velocity, true))
-                        continue
-                    }
                     val scene = Apc64Codec.sceneForNote(message.note)
                     if (scene != null) {
                         onEvent(Apc64Event.Scene(scene))
                         continue
                     }
                     when (message.note) {
-                        Apc64Codec.NOTE_PLAY -> onEvent(Apc64Event.Transport(TransportAction.PLAY))
-                        Apc64Codec.NOTE_STOP -> onEvent(Apc64Event.Transport(TransportAction.STOP))
-                        Apc64Codec.NOTE_RECORD -> onEvent(Apc64Event.Transport(TransportAction.RECORD))
-                        Apc64Codec.NOTE_CLIP_STOP -> onEvent(Apc64Event.ClipStop)
-                        Apc64Codec.NOTE_MUTE -> onEvent(Apc64Event.Mute(true))
-                        Apc64Codec.NOTE_SOLO -> onEvent(Apc64Event.Solo(true))
-                        Apc64Codec.NOTE_SHIFT -> onEvent(Apc64Event.Shift(true))
-                        in Apc64Codec.TRACK_SELECT_FIRST..Apc64Codec.TRACK_SELECT_LAST ->
-                            onEvent(Apc64Event.TrackSelect(message.note - Apc64Codec.TRACK_SELECT_FIRST))
+                        Apc64Codec.NOTE_PLAY -> {
+                            onEvent(Apc64Event.Transport(TransportAction.PLAY)); continue
+                        }
+                        Apc64Codec.NOTE_STOP -> {
+                            onEvent(Apc64Event.Transport(TransportAction.STOP)); continue
+                        }
+                        Apc64Codec.NOTE_RECORD -> {
+                            onEvent(Apc64Event.Transport(TransportAction.RECORD)); continue
+                        }
+                        Apc64Codec.NOTE_CLIP_STOP -> {
+                            onEvent(Apc64Event.ClipStop); continue
+                        }
+                        Apc64Codec.NOTE_MUTE -> {
+                            onEvent(Apc64Event.Mute(true)); continue
+                        }
+                        Apc64Codec.NOTE_SOLO -> {
+                            onEvent(Apc64Event.Solo(true)); continue
+                        }
+                        Apc64Codec.NOTE_SHIFT -> {
+                            onEvent(Apc64Event.Shift(true)); continue
+                        }
+                        in Apc64Codec.TRACK_SELECT_FIRST..Apc64Codec.TRACK_SELECT_LAST -> {
+                            onEvent(
+                                Apc64Event.TrackSelect(
+                                    message.note - Apc64Codec.TRACK_SELECT_FIRST,
+                                ),
+                            )
+                            continue
+                        }
+                    }
+                    if (current.noteInput) {
+                        onEvent(Apc64Event.Key(message.note, message.velocity, true))
+                        continue
+                    }
+                    val pad = Apc64Codec.padForNote(
+                        message.note, current.padBaseNote, current.flipRows,
+                    )
+                    if (pad != null) {
+                        onEvent(Apc64Event.Pad(pad, message.velocity, true))
                     }
                 }
                 is MidiMessage.NoteOff -> {
+                    when (message.note) {
+                        Apc64Codec.NOTE_MUTE -> {
+                            onEvent(Apc64Event.Mute(false)); continue
+                        }
+                        Apc64Codec.NOTE_SOLO -> {
+                            onEvent(Apc64Event.Solo(false)); continue
+                        }
+                        Apc64Codec.NOTE_SHIFT -> {
+                            onEvent(Apc64Event.Shift(false)); continue
+                        }
+                    }
+                    if (current.noteInput) {
+                        onEvent(Apc64Event.Key(message.note, 0, false))
+                        continue
+                    }
                     val pad = Apc64Codec.padForNote(
                         message.note, current.padBaseNote, current.flipRows,
                     )
                     if (pad != null) {
                         onEvent(Apc64Event.Pad(pad, 0, false))
-                        continue
-                    }
-                    when (message.note) {
-                        Apc64Codec.NOTE_MUTE -> onEvent(Apc64Event.Mute(false))
-                        Apc64Codec.NOTE_SOLO -> onEvent(Apc64Event.Solo(false))
-                        Apc64Codec.NOTE_SHIFT -> onEvent(Apc64Event.Shift(false))
                     }
                 }
                 is MidiMessage.ControlChange -> {

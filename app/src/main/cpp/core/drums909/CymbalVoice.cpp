@@ -158,9 +158,9 @@ namespace Replicant909
 
         // 5. Dynamic Accent & Output Stage
         const float accentBoost = 1.0f + currentAccent * 0.45f;
-        const float shaped = filteredSignal * ampEnv * chokeGain * currentVelocity * accentBoost * level * 1.55f;
+        const float shaped = filteredSignal * ampEnv * chokeGain * currentVelocity * accentBoost * level * 1.10f;
 
-        const float out = fastTanh(shaped * 1.25f);
+        const float out = fastTanh(shaped * 1.00f);
 
         envTime += dt;
         updatePeak(out);

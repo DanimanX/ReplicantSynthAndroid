@@ -50,6 +50,7 @@ public:
     static constexpr int kSteps = 16;
     static constexpr int kDrumVoices = 11;
     static constexpr int kParams = 32;
+    static constexpr int kMaxMidiNotes = 96;
 
     // Parameter layout inside the 32-float clip block.
     // Acid: 0 wave, 1 cutoff, 2 resonance, 3 envMod, 4 decay, 5 accent,
@@ -90,6 +91,11 @@ public:
                       bool mute, bool solo, bool fxEnabled);
     void setStep(int pad, int step, bool gate, int note, int velocity, bool accent, bool slide);
     void setDrumStep(int pad, int voice, int step, bool on, int velocity);
+    // Free MIDI notes for the wavetable engine: start/length are 16th-note steps.
+    void setMidiNote(int pad, bool on, int note, int start, int length, int velocity);
+    void clearMidiNotes(int pad);
+    // Audition a note without touching the clip pattern (APC64 key input).
+    void previewNote(int pad, bool on, int note, int velocity);
     void ensureFx(int pad);
     void clearClip(int pad);
 
@@ -134,6 +140,14 @@ private:
         bool slide = false;
     };
 
+    struct MidiNote {
+        bool active = false;
+        uint8_t note = 60;
+        uint8_t velocity = 100;
+        uint8_t start = 0;
+        uint8_t length = 1;
+    };
+
     struct Clip {
         int kind = static_cast<int>(ClipKind::Empty);
         int root = 60;
@@ -148,6 +162,7 @@ private:
         float params[kParams] = {};
 
         ClipStep steps[kSteps] = {};
+        MidiNote midi[kMaxMidiNotes] = {};
         uint16_t drumMask[kDrumVoices] = {};
         uint8_t drumVel[kDrumVoices][kSteps] = {};
 
@@ -178,6 +193,9 @@ private:
         kCmdStopAll = 8,
         kCmdClear = 9,
         kCmdPanic = 10,
+        kCmdMidiNote = 11,
+        kCmdClearMidi = 12,
+        kCmdPreview = 13,
     };
 
     struct Command {
@@ -214,6 +232,7 @@ private:
     void drainCommands();
     void applyConfigure(Clip& clip, int pad, const Command& command);
     void applyParams(Clip& clip, int pad, const Command& command);
+    void applyMidiNote(Clip& clip, const Command& command);
     void applyVoiceParams(Clip& clip);
     void updatePadState(int pad);
 
@@ -222,6 +241,7 @@ private:
     void stopTransport();
     void onStepBoundary();
     void triggerStep(Clip& clip, int step);
+    void triggerMidiStep(Clip& clip, int step);
     void startClip(Clip& clip);
     void stopClip(Clip& clip, bool hard);
     void renderChunk(float* out, int frames, float* padOut);
