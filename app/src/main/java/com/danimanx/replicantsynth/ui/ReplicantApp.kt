@@ -47,6 +47,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -133,6 +135,7 @@ fun ReplicantApp(vm: MainViewModel) {
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide = maxWidth > 760.dp
+            val inspectorHeight = if (maxHeight >= 820.dp) 368.dp else 300.dp
             Column(Modifier.fillMaxSize()) {
                 Header(
                     vm = vm,
@@ -178,7 +181,7 @@ fun ReplicantApp(vm: MainViewModel) {
                         vm,
                         Modifier
                             .fillMaxWidth()
-                            .height(334.dp),
+                            .height(inspectorHeight),
                     )
                 }
                 StatusBar(vm, audio, midi)
@@ -347,6 +350,7 @@ private fun TransportButton(
             .clip(RoundedCornerShape(8.dp))
             .background(if (active) color.copy(alpha = 0.16f) else Panel)
             .border(1.dp, if (active) color.copy(alpha = 0.8f) else PanelLine, RoundedCornerShape(8.dp))
+            .semantics(mergeDescendants = true) { contentDescription = "TRANSPORT $label" }
             .clickable(onClick = onClick)
             .padding(vertical = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -410,8 +414,9 @@ private fun QuantizeChip(vm: MainViewModel) {
 
 @Composable
 private fun AudioBadge(audio: AudioStats) {
+    val exclusive = audio.sharingLabel == "EXCLUSIVE"
     val color = when {
-        audio.audioRunning && audio.latencyMs < 20f -> Lime
+        audio.audioRunning && exclusive && audio.latencyMs < 20f -> Lime
         audio.audioRunning -> Amber
         else -> TextDim
     }
@@ -424,7 +429,11 @@ private fun AudioBadge(audio: AudioStats) {
         horizontalAlignment = Alignment.End,
     ) {
         Text(
-            text = if (audio.audioRunning) "${audio.latencyMs.toInt()} ms" else "SILENT",
+            text = when {
+                !audio.audioRunning -> "SILENT"
+                exclusive -> "${audio.latencyMs.toInt()} ms"
+                else -> "SHARED"
+            },
             color = color,
             fontFamily = Mono,
             fontWeight = FontWeight.Bold,
@@ -454,6 +463,7 @@ private fun MidiChip(vm: MainViewModel, midi: Apc64State) {
                 if (connected) Lime.copy(alpha = 0.6f) else PanelLine,
                 RoundedCornerShape(8.dp),
             )
+            .semantics(mergeDescendants = true) { contentDescription = "MIDI DEVICE" }
             .clickable { vm.showMidi = true }
             .padding(horizontal = 8.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -481,6 +491,7 @@ private fun MenuButton(vm: MainViewModel) {
             .clip(RoundedCornerShape(8.dp))
             .background(Panel)
             .border(1.dp, PanelLine, RoundedCornerShape(8.dp))
+            .semantics(mergeDescendants = true) { contentDescription = "PROJECT MENU" }
             .clickable { vm.showProjectMenu = true },
         contentAlignment = Alignment.Center,
     ) {
@@ -505,13 +516,20 @@ private fun RecordingBanner(vm: MainViewModel) {
         )
         Spacer(Modifier.width(7.dp))
         MonoLabel(
-            "REC ${formatTime(vm.recordingSeconds)} · 48 kHz · 24-bit · " +
+            "REC ${formatTime(vm.recordingSeconds)} · ${vm.audioStats.value.sampleRate / 1000} kHz · 24-bit · " +
                 (if (vm.stemRecordingPad != null) "PAD STEM" else "MASTER"),
             color = Red,
             size = 9,
         )
         Spacer(Modifier.weight(1f))
-        LedButton("STOP", true, Red) { vm.stopRecordingNow() }
+        LedButton(
+            "STOP",
+            true,
+            Red,
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                contentDescription = "STOP RECORDING"
+            },
+        ) { vm.stopRecordingNow() }
     }
 }
 

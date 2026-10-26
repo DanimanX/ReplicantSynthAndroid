@@ -20,11 +20,11 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/phone_grid.png" alt="ReplicantSynth 8x8 LED pad clip launcher on Android" width="420">
+  <img src="assets/replicantsynth_poster.png" alt="ReplicantSynth — Android 64-pad clip system" width="950">
 </p>
 
 <p align="center">
-  <em>64 pads, six demo scenes, live meters and per-pad engine / FX routing — captured from the running emulator.</em>
+  <em>64 pads, six demo scenes, live meters and per-pad engine / FX routing — captured from the running app.</em>
 </p>
 
 ---
@@ -55,19 +55,32 @@ Everything runs in a single C++20 engine. The UI never touches the audio thread:
 
 ## Screenshots
 
-| Main grid | FX insert |
-| --- | --- |
-| ![Main grid](screenshots/phone_grid.png) | ![ReplicantFX insert](screenshots/phone_fx.png) |
+<p align="center">
+  <img src="screenshots/phone_grid.png" width="230" alt="64-pad clip grid">
+  <img src="screenshots/phone_fx.png" width="230" alt="ReplicantFX Filter+Drive insert">
+  <img src="screenshots/phone_pattern.png" width="230" alt="16-step acid pattern editor">
+</p>
+<p align="center">
+  <em>64-pad clip grid · per-pad ReplicantFX insert · 16-step pattern editor</em>
+</p>
 
-| 16-step pattern | Stem capture |
-| --- | --- |
-| ![Pattern editor](screenshots/phone_pattern.png) | ![Capture](screenshots/phone_mix_recording.png) |
+<p align="center">
+  <img src="screenshots/phone_fx_picker.png" width="230" alt="All 48 ReplicantFX slots">
+  <img src="screenshots/phone_mix_recording.png" width="230" alt="24-bit stem capture running">
+  <img src="screenshots/phone_midi.png" width="230" alt="APC64 USB MIDI mapping and handshake">
+</p>
+<p align="center">
+  <em>All 48 ReplicantFX slots · 24-bit stem capture · APC64 profile and handshake</em>
+</p>
 
-| APC64 / MIDI | Tablet layout |
-| --- | --- |
-| ![APC64 mapping](screenshots/phone_midi.png) | ![Tablet](screenshots/tablet_grid.png) |
+<p align="center">
+  <img src="screenshots/tablet_landscape.png" width="900" alt="Wide tablet layout with the 8x8 grid and inspector">
+</p>
+<p align="center">
+  <em>Wide tablet layout: the same APK at 2560 × 1600, 240 dpi.</em>
+</p>
 
-All four phone captures come from the running app on an Android 15 emulator (1080 × 2400, 420 dpi). The tablet capture is the same APK at 1600 × 2560, 240 dpi. No mock-ups.
+Every capture comes from the running app on an Android 15 emulator (1080 × 2400, 420 dpi; tablet 2560 × 1600, 240 dpi). No mock-ups. The audio badge reads **SHARED** because the emulator opens AAudio in shared mode; the app shows a millisecond figure only when it obtains an exclusive stream on hardware.
 
 ## Quick start
 
@@ -141,7 +154,7 @@ More detail: [docs/BUILD.md](docs/BUILD.md), [docs/ARCHITECTURE.md](docs/ARCHITE
 
 - **36,103 host checks** across wavetables, 303, 909, Wave, sample playback, all 48 FX, quantized launch, scenes, recording, 44.1 kHz re-prepare and peak guard. `0 failures`.
 - **26 JVM unit tests** for WAV decoding, project JSON, APC64 mapping, LED palette, SysEx handshake, MIDI stream parsing and clip defaults. `0 failures`.
-- **Real emulator run**: on-device screenshots, project load, demo sample decode, clip launching, recording and MIDI sheet. The emulator reports AAudio shared/silent mode; latency is a device measurement, not an emulator claim.
+- **Real emulator run**: on-device screenshots, project load, demo sample decode, clip launching, FX switching, recording and MIDI sheet. A captured stem was verified with `ffprobe` as `pcm_s24le`, 48 kHz stereo, 3.74 s, peak 0.40. The emulator reports AAudio shared mode; latency is a hardware measurement, not an emulator claim.
 - **APC64 hardware**: the protocol, handshake and mappings are covered by unit tests; a physical APC64 was not attached to the CI runner. Please report device-specific quirks.
 
 ## Architecture

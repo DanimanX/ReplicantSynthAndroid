@@ -815,6 +815,10 @@ void ClipEngine::process(float* interleavedStereo, int frames) {
     for (int i = 0; i < kPads; ++i) {
         padMeter_[static_cast<size_t>(i)].store(padPeakBlock_[static_cast<size_t>(i)],
                                                 std::memory_order_relaxed);
+        const int packed = padState_[static_cast<size_t>(i)].load(std::memory_order_relaxed);
+        if (((packed >> 4) & 0x0F) != clips_[static_cast<size_t>(i)].state) {
+            updatePadState(i);
+        }
     }
 
     for (int i = 0; i < frames; i += 32) {

@@ -177,6 +177,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else if (clip.kind == ClipKind.ACID || clip.kind == ClipKind.WAVE) {
                 for (step in 0 until ClipLimits.STEPS) engine.setStep(clip, step)
             }
+            padRuntime[clip.index].value = PadRuntime(
+                kind = clip.kind.ordinal,
+                state = 0,
+                fxType = clip.fxType,
+                mute = clip.mute,
+                solo = clip.solo,
+            )
         }
     }
 

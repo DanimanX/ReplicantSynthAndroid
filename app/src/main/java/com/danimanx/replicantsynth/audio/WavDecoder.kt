@@ -59,8 +59,9 @@ object WavDecoder {
         require(blockAlign >= channels * (bits / 8)) { "invalid WAV block alignment" }
         require(format == 1 || format == 3) { "unsupported WAV format tag $format" }
 
+        if (dataSize <= 0) dataSize = bytes.size - dataOffset
         val bytesPerSample = bits / 8
-        val availableFrames = minOf(dataSize / blockAlign, bytes.size / blockAlign)
+        val availableFrames = minOf(dataSize / blockAlign, (bytes.size - dataOffset) / blockAlign)
         val maxFrames = minOf(availableFrames, sampleRate * maxSeconds)
         require(maxFrames > 0) { "WAV has no audio frames" }
 

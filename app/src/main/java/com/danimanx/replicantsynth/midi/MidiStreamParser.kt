@@ -61,6 +61,16 @@ class MidiStreamParser {
                     dataCount = 0
                     runningStatus = 0
                 }
+                byte >= 0xF8 -> {
+                    // Realtime bytes may interrupt a SysEx or a channel message.
+                    when (byte) {
+                        0xF8 -> out += MidiMessage.Clock
+                        0xFA -> out += MidiMessage.Start
+                        0xFB -> out += MidiMessage.Continue
+                        0xFC -> out += MidiMessage.Stop
+                        else -> Unit
+                    }
+                }
                 inSysex -> {
                     if (byte and 0x80 == 0) {
                         sysex.write(byte)
@@ -70,15 +80,6 @@ class MidiStreamParser {
                         inSysex = false
                         runningStatus = byte
                         dataCount = 0
-                    }
-                }
-                byte >= 0xF8 -> {
-                    when (byte) {
-                        0xF8 -> out += MidiMessage.Clock
-                        0xFA -> out += MidiMessage.Start
-                        0xFB -> out += MidiMessage.Continue
-                        0xFC -> out += MidiMessage.Stop
-                        else -> Unit
                     }
                 }
                 byte >= 0xF0 -> {

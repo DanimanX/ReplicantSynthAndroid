@@ -20,7 +20,11 @@ data class AudioStats(
     val error: String? = null,
 ) {
     val latencyLabel: String
-        get() = if (audioRunning) "${latencyMs.toInt()} ms" else "silent"
+        get() = when {
+            !audioRunning -> "silent"
+            sharingLabel == "EXCLUSIVE" -> "${latencyMs.toInt()} ms"
+            else -> sharingLabel.lowercase()
+        }
 }
 
 /**

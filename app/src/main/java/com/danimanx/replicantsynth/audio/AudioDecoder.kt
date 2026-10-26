@@ -57,7 +57,7 @@ object AudioDecoder {
             var outputChannels = sourceChannels
             var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
             val maxSamples = sourceRate * maxSeconds * sourceChannels
-            val sink = FloatSink(maxSamples.coerceAtLeast(4096))
+            val sink = FloatSink(1 shl 18)
 
             var guard = 0
             while (!outputEos && guard < 2_000_000) {

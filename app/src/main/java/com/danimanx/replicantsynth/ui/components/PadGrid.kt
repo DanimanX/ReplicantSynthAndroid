@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,7 +79,7 @@ fun PadDeck(vm: MainViewModel, modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         val railWidth = if (maxWidth < 520.dp) 28.dp else 38.dp
-        val side = minOf(maxWidth - railWidth - 10.dp, maxHeight - 4.dp)
+        val side = minOf(maxWidth - railWidth - 10.dp, maxHeight - 4.dp).coerceAtLeast(140.dp)
         Row(
             Modifier
                 .width(side + railWidth + 6.dp)
@@ -127,6 +129,9 @@ private fun SceneRail(
                         else PanelLine.copy(alpha = 0.55f),
                         RoundedCornerShape(6.dp),
                     )
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "SCENE ${row + 1}"
+                    }
                     .combinedClickable(
                         onClick = { vm.launchScene(row) },
                         onLongClick = { vm.stopScene(row) },
@@ -158,7 +163,10 @@ private fun PadGrid(vm: MainViewModel, modifier: Modifier, blink: Float) {
     val project = vm.project
     BoxWithConstraints(modifier) {
         val compact = maxWidth / 8 < 52.dp
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(
+            Modifier.fillMaxHeight(),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
             for (row in 0 until 8) {
                 Row(
                     Modifier.weight(1f).fillMaxWidth(),
@@ -232,6 +240,10 @@ private fun PadCell(
             .clip(shape)
             .background(background)
             .border(borderWidth, borderColor, shape)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "PAD ${(pad + 1).toString().padStart(2, '0')} " +
+                    (if (empty) "EMPTY" else clipKind.short)
+            }
             .combinedClickable(
                 onClick = { vm.togglePad(pad) },
                 onLongClick = {

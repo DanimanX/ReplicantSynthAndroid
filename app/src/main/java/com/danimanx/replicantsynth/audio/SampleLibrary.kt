@@ -24,6 +24,13 @@ object SampleLibrary {
 
     fun importAudio(context: Context, uri: Uri): File? = runCatching {
         val mime = context.contentResolver.getType(uri).orEmpty()
+        val size = runCatching {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (index >= 0 && cursor.moveToFirst()) cursor.getLong(index) else -1L
+            }
+        }.getOrNull() ?: -1L
+        if (size > 250L * 1024L * 1024L) return null
         val extension = extensionFor(context, uri, mime)
         val target = File(samplesDir(context), "sample-${UUID.randomUUID()}.$extension")
         context.contentResolver.openInputStream(uri)?.use { input ->

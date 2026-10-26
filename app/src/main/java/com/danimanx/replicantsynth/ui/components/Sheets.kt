@@ -322,10 +322,12 @@ fun MidiSheet(vm: MainViewModel) {
             ) { vm.midi.setLedFeedback(it) }
 
             SectionTitle("CONTROLS")
-            MonoLabel(
+            Text(
                 "PADS         NOTES 0–63\nSCENES       NOTES 112–119\nPLAY/STOP    91 / 93\nRECORD       92\nCLIP STOP    111\nMUTE / SOLO  109 / 110\nENCODER      CC 90\nTOUCH 1–8    PB CH 1–8\nSTRIP 1      MASTER GAIN\nSTRIP 8      PAD GAIN\nSTRIP 2–7    FX PARAMS 1–6",
                 color = TextMid,
-                size = 8,
+                fontFamily = Mono,
+                fontSize = 8.sp,
+                lineHeight = 12.sp,
             )
 
             SectionTitle("TEST")
