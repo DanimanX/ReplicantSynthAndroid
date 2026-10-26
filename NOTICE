@@ -1,0 +1,24 @@
+ReplicantSynth
+Copyright (c) 2026 Daniel Rojas Grasset (DanimanX)
+
+This application unites four MIT-licensed Replicant instruments:
+
+  Replicant303  — Virtual analog TB-303 synthesizer and pattern sequencer
+                  https://github.com/DanimanX/Replicant303
+  ReplicantWave — Cyberpunk wavetable synthesizer
+                  https://github.com/DanimanX/ReplicantWave
+  Replicant909  — Circuit-level TR-909 drum machine
+                  https://github.com/DanimanX/Replicant909
+  ReplicantFX   — SP-404MKII 48-slot MFX processor
+                  https://github.com/DanimanX/ReplicantFX
+
+The Android port reuses the Replicant303 C++ DSP core, adapts the
+Replicant909 voice models, and ports the ReplicantWave wavetable architecture
+and the ReplicantFX effect algorithms to the shared C++20 clip engine.
+
+Oboe (Apache 2.0) provides the AAudio/OpenSL ES stream.
+Jetpack Compose and AndroidX are licensed under Apache 2.0.
+
+The 909 PCM ROM content is generated procedurally from the voice model in the
+MIT-licensed Replicant909 source; no Roland firmware or copyrighted samples are
+included.

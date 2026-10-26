@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">ReplicantSynth</string>
+    <string name="channel_name">ReplicantSynth engine</string>
+    <string name="channel_description">Keeps the low-latency clip engine and USB MIDI running.</string>
+</resources>
