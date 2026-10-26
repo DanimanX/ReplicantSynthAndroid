@@ -30,6 +30,8 @@
 ### APC64
 - New Notes/Chord input mode: pad-range notes write into the Wave piano roll at
   the cursor, with selectable length, velocity and ±2 octave transpose.
+- Simultaneous chord notes are grouped onto one step; the cursor advances only
+  when a new key group starts (60 ms window).
 - The clip `CHORD` selector stacks fifth / minor / major / octave intervals.
 
 ### UI
@@ -47,7 +49,7 @@
 ### Verification
 - 36,112 host checks (including 909 headroom/crest, MIDI sustain/release,
   per-key release and stopped-clip audition), 0 failures.
-- 34 JVM tests (including the 512-slot 303 parity check and all factory banks),
+- 38 JVM tests (including the 512-slot 303 parity check and all factory banks),
   0 failures.
 
 ## 0.0.1 — 2026-10-20

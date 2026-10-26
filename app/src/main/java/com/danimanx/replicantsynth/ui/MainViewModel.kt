@@ -2,6 +2,7 @@ package com.danimanx.replicantsynth.ui
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -18,6 +19,7 @@ import com.danimanx.replicantsynth.audio.SampleLibrary
 import com.danimanx.replicantsynth.midi.Apc64Controller
 import com.danimanx.replicantsynth.midi.Apc64Event
 import com.danimanx.replicantsynth.midi.Apc64State
+import com.danimanx.replicantsynth.midi.NoteGroupCursor
 import com.danimanx.replicantsynth.midi.TransportAction
 import com.danimanx.replicantsynth.model.Clip
 import com.danimanx.replicantsynth.model.ClipKind
@@ -115,6 +117,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val midi = Apc64Controller(application) { event -> handleMidi(event) }
     val midiState: StateFlow<Apc64State> = midi.state
+    private val noteEntry = NoteGroupCursor(ClipLimits.STEPS)
 
     val selectedClip: Clip
         get() = project.clips[selectedPad.coerceIn(0, ClipLimits.PADS - 1)]
@@ -609,6 +612,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val target = pad.coerceIn(0, ClipLimits.PADS - 1)
         selectPad(target, 2)
         midiCursor = 0
+        noteEntry.reset(0)
         val selected = project.clips[target]
         if (selected.kind == ClipKind.WAVE && selected.length != ClipLimits.STEPS) {
             selected.length = ClipLimits.STEPS
@@ -636,6 +640,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun moveMidiCursor(step: Int) {
         midiCursor = step.coerceIn(0, ClipLimits.STEPS - 1)
+        noteEntry.reset(midiCursor)
     }
 
     fun chooseMidiLength(steps: Int) {
@@ -693,6 +698,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setApcNoteInput(enabled: Boolean) {
         midi.setNoteInput(enabled)
+        noteEntry.reset(midiCursor)
         message = if (enabled) "APC64 keys → piano roll" else "APC64 pads → clip grid"
     }
 
@@ -933,7 +939,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (clip.kind != ClipKind.WAVE) return
                 val note = (event.note + apcOctave * 12).coerceIn(0, 127)
                 if (event.pressed) {
-                    addMidiNote(clip, note, velocity = event.velocity)
+                    val step = noteEntry.press(SystemClock.uptimeMillis(), midiLength)
+                    midiCursor = step
+                    addMidiNote(
+                        clip,
+                        note,
+                        start = step,
+                        length = midiLength,
+                        velocity = event.velocity,
+                        advance = false,
+                    )
                 } else {
                     engine.previewNote(clip.index, note, 0, false)
                 }

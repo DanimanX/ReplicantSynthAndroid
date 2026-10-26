@@ -47,8 +47,9 @@ stop being clip launches and become key presses instead:
 
 1. The note lands on the amber **cursor** step with the selected length
    (`1/16`, `1/8`, `1/4`, `1/2`) and the current note velocity.
-2. The cursor advances by that length, so playing pads in order writes a
-   phrase.
+2. Notes that arrive together (the hardware Chord button) share the same step;
+   the cursor advances by the note length when a new key group starts, so
+   playing pads in order writes a phrase.
 3. The note is auditioned through the native Wave voice immediately.
 4. `OCT -` / `OCT +` transpose incoming keys by ±2 octaves.
 5. The chord button on the APC64 sends several note-ons per key; each one is

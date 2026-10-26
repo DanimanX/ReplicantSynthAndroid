@@ -167,7 +167,7 @@ More detail: [docs/BUILD.md](docs/BUILD.md), [docs/ARCHITECTURE.md](docs/ARCHITE
 ## Verification
 
 - **36,112 host checks** across wavetables, 303, 909 headroom, MIDI-note polyphony/release, Wave, sample playback, all 48 FX, quantized launch, scenes, recording, 44.1 kHz re-prepare and peak guard. `0 failures`.
-- **34 JVM unit tests** for WAV decoding, project JSON (including MIDI notes), APC64 mapping, LED palette, SysEx handshake, MIDI stream parsing, clip defaults, the 512-slot 303 generator and all three factory banks. `0 failures`.
+- **38 JVM unit tests** for WAV decoding, project JSON (including MIDI notes), APC64 mapping, LED palette, SysEx handshake, MIDI stream parsing, clip defaults, the 512-slot 303 generator and all three factory banks. `0 failures`.
 - **Real emulator run**: on-device screenshots, project load, demo sample decode, clip launching, FX switching, recording and MIDI sheet. A captured stem was verified with `ffprobe` as `pcm_s24le`, 48 kHz stereo, 3.74 s, peak 0.40. The emulator reports AAudio shared mode; latency is a hardware measurement, not an emulator claim.
 - **APC64 hardware**: the protocol, handshake and mappings are covered by unit tests; a physical APC64 was not attached to the CI runner. Please report device-specific quirks.
 
