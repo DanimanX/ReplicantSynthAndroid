@@ -54,6 +54,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import com.danimanx.replicantsynth.audio.SampleLibrary
+import com.danimanx.replicantsynth.midi.Apc64Codec
 import com.danimanx.replicantsynth.model.FX_CATALOG
 import com.danimanx.replicantsynth.model.FxParam
 import com.danimanx.replicantsynth.model.QUANTIZE_OPTIONS
@@ -243,9 +244,13 @@ fun MidiSheet(vm: MainViewModel) {
                         fontSize = 12.sp,
                     )
                     MonoLabel(
-                        if (state.available) "USB HOST MIDI READY · PROFILE APC64"
-                        else "ANDROID MIDI SERVICE UNAVAILABLE",
-                        color = TextDim,
+                        when {
+                            !state.available -> "ANDROID MIDI SERVICE UNAVAILABLE"
+                            state.connected ->
+                                "FW ${state.firmware ?: "…"} · ${state.padMode.label}"
+                            else -> "USB HOST MIDI READY · PROFILE APC64"
+                        },
+                        color = if (state.connected && !state.firmwareSupported) Amber else TextDim,
                         size = 8,
                     )
                 }
@@ -320,15 +325,49 @@ fun MidiSheet(vm: MainViewModel) {
                 detail = "Note-on velocity palette on channel 6",
                 checked = state.ledFeedback,
             ) { vm.midi.setLedFeedback(it) }
-            SwitchRow(
-                label = "APC64 KEYS → PIANO ROLL",
-                detail = "Pads become keys; notes land at the amber cursor",
-                checked = state.noteInput,
-            ) { vm.setApcNoteInput(it) }
+            SectionTitle("PAD MODE")
+            MonoLabel(
+                when {
+                    state.padMode.keySurface ->
+                        "${state.padMode.label} · NOTES PORT → PIANO ROLL"
+                    state.padMode.hostOwnsPads ->
+                        "${state.padMode.label} · PADS → CLIPS"
+                    else ->
+                        "${state.padMode.label} · PADS STAY ON THE UNIT"
+                },
+                color = if (state.padMode.keySurface) Lime else Cyan,
+                size = 9,
+            )
+            MonoLabel(
+                "DAW ${state.dawPort ?: "—"} · NOTES ${state.notesPort ?: "MISSING"}",
+                color = if (!state.connected || state.notesPortOpen) TextMid else Amber,
+                size = 8,
+            )
+            MonoLabel(
+                if (state.firmware == null) {
+                    "FIRMWARE VALIDATING…"
+                } else {
+                    "FIRMWARE ${state.firmware} · " +
+                        if (state.firmwareSupported) "MODE MAP OK"
+                        else "VALIDATE ${Apc64Codec.VALIDATED_FIRMWARE}"
+                },
+                color = if (state.firmware != null && !state.firmwareSupported) {
+                    Amber
+                } else {
+                    TextDim
+                },
+                size = 8,
+            )
+            Text(
+                "Press NOTE or CHORD on the APC64. The app follows the hardware mode; no app switch moves the session pads into key input. In Note/Chord the unit owns the pad grid and its LEDs are restored when you return to Session.",
+                color = TextMid,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
 
             SectionTitle("CONTROLS")
             Text(
-                "PADS         NOTES 0–63 (CLIPS)\nPADS + KEYS  NOTES 0–63 (PIANO ROLL)\nSCENES       NOTES 112–119\nPLAY/STOP    91 / 93\nRECORD       92\nCLIP STOP    111\nMUTE / SOLO  109 / 110\nENCODER      CC 90\nTOUCH 1–8    PB CH 1–8\nSTRIP 1      MASTER GAIN\nSTRIP 8      PAD GAIN\nSTRIP 2–7    FX PARAMS 1–6",
+                "PADS SESSION  NOTES 0–63 (CLIPS)\nPADS NOTE     NOTES PORT → PIANO ROLL\nPADS CHORD    NOTES PORT → CHORD NOTES\nSCENES        NOTES 112–119\nPLAY/STOP     91 / 93\nRECORD        92\nCLIP STOP     111\nMUTE / SOLO   109 / 110\nENCODER       CC 90\nTOUCH 1–8     PB CH 1–8\nSTRIP 1       MASTER GAIN\nSTRIP 8       PAD GAIN\nSTRIP 2–7     FX PARAMS 1–6",
                 color = TextMid,
                 fontFamily = Mono,
                 fontSize = 8.sp,

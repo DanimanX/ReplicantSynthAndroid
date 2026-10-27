@@ -4,11 +4,18 @@
 
 1. Use a USB-C OTG adapter (or a powered hub) and connect the APC64.
 2. Open the **MIDI** chip in the header. The app lists USB MIDI devices,
-   auto-connects the first name containing `APC64`, and opens both the device's
-   MIDI input (to send LEDs/SysEx) and output (to receive pads).
+   auto-connects the first name containing `APC64`, and opens the **DAW** and
+   **Notes** USB MIDI cables separately. The DAW cable sends LEDs/SysEx and
+   receives session pads and side buttons; the Notes cable carries the unit's
+   own Note and Chord surfaces.
 3. Android's MIDI service grants access without a runtime USB permission dialog
    on standard devices. If the list is empty, tap **REFRESH** after re-seating
    the cable.
+
+Ports are resolved by name (`DAW`, `Notes`, `Custom`) with cable-number
+fallbacks (`0` = DAW, `1` = Notes, `2` = MIDI, `3` = Custom). The MIDI sheet
+shows which DAW and Notes ports were opened. If the Notes port is missing,
+Note/Chord mode cannot reach the piano roll; replug the USB cable.
 
 ## Handshake
 
@@ -28,6 +35,50 @@ F0 47 00 53 10 ... F7        OLED lines 1–4
 If the unit was previously in Ableton Live mode, disconnect/reconnect after
 opening ReplicantSynth so the handshake is sent to a fresh endpoint.
 
+### Firmware validation
+
+The identity reply is parsed and shown in the MIDI sheet:
+
+```
+F0 7E 00 06 02 47 53 00 19 <fw0 fw1 fw2 fw3> ... F7
+```
+
+Firmware **1.2.1.6** is the validated baseline. The app prints the four bytes
+as `major.minor.patch.build` and marks older firmware as needing validation.
+The custom FreeAPC64 firmware reports the same version because the patches do
+not change the version field.
+
+## Pad modes
+
+The unit reports its own pad mode on the DAW cable:
+
+```
+F0 47 00 53 19 00 01 <mode> F7
+```
+
+The IDs below are from firmware 1.2.1.6 and Bitwig's APC64 extension; they are
+**not** the page indexes used by Akai's project editor. A note must be routed by
+the mode reported by the unit, not by an app-side switch.
+
+| Mode | ID | Pad grid | App action |
+| --- | --- | --- | --- |
+| Session | 0 | host-drawn | Pads launch/stop clips |
+| Overview | 1 | host-drawn | Treated like Session |
+| Note | 2 | unit-owned | Notes cable → Wave piano roll |
+| Chord | 3 | unit-owned | Notes cable → chord notes in the piano roll |
+| Chord settings | 4 | unit-owned | Pads stay on the unit |
+| Drum | 5 | unit-owned | Pads stay on the unit |
+| Step | 6 | unit-owned | Pads stay on the unit |
+| Step settings | 7 | unit-owned | Pads stay on the unit |
+| Project | 8 | unit-owned | Pads stay on the unit |
+| Custom | 9 | unit-owned | Pads stay on the unit |
+
+When the mode is not Session/Overview the app never maps a DAW-cable note to a
+clip. On Android builds that merge the USB cables, pad-range notes that arrive
+on the DAW cable in Note/Chord mode are treated as keys instead of clips. The
+Notes cable is always interpreted as keys, even when a pitch collides with a
+scene or transport note number.
+
 ## Pad map
 
 - Ableton/DAW mode: notes **0–63**, note 0 is the **bottom-left** pad.
@@ -39,25 +90,30 @@ opening ReplicantSynth so the handshake is sent to a fresh endpoint.
 The on-screen grid and the APC64 always refer to the same pad number; changing
 the base/flip only changes the USB note translation.
 
-## Notes and chords into the piano roll
+## Note and Chord mode
 
-Every Wave clip has an **APC64 KEYS** switch in its piano roll (PATTERN tab or
-double-tap editor). When it is on, note-on/note-off messages in the pad range
-stop being clip launches and become key presses instead:
+Select **NOTE** or **CHORD** on the APC64. The app follows the mode report and
+routes the Notes cable into the Wave piano roll. There is no app-side “APC64
+KEYS” switch: Session pads keep launching clips while the hardware is in
+Session, and Note/Chord pads only write notes while the hardware is in a key
+mode.
 
 1. The note lands on the amber **cursor** step with the selected length
-   (`1/16`, `1/8`, `1/4`, `1/2`) and the current note velocity.
-2. Notes that arrive together (the hardware Chord button) share the same step;
-   the cursor advances by the note length when a new key group starts, so
-   playing pads in order writes a phrase.
-3. The note is auditioned through the native Wave voice immediately.
+   (`1/16`, `1/8`, `1/4`, `1/2`) and the incoming velocity.
+2. Chord Mode sends several note-ons for one pad. Notes within the 60 ms group
+   window share one step; the cursor advances by the note length when a new key
+   group starts, so playing pads in order writes a phrase.
+3. Each note is auditioned through the native engine immediately. In Chord
+   Mode the hardware's notes are already the chord; the clip's `CHORD` selector
+   is a separate sound-design stack and can be set to `SINGLE` if you do not
+   want it added on top.
 4. `OCT -` / `OCT +` transpose incoming keys by ±2 octaves.
-5. The chord button on the APC64 sends several note-ons per key; each one is
-   written as its own note. The clip's `CHORD` selector additionally makes the
-   synth voice play fifth / minor / major / octave stacks from a single note.
+5. If the selected pad is not a Wave clip, the key is ignored and the editor
+   shows a hint. Select a Wave clip to record notes.
 
-Scene, transport, mute/solo, clip-stop and track-select notes keep their normal
-functions. Turn **APC64 KEYS** off to return the pads to clip launching.
+Scene, transport, mute/solo, clip-stop and track-select buttons keep their
+normal functions while Note/Chord mode is active because the unit reports them
+on the DAW cable.
 
 ## LED feedback
 
@@ -86,12 +142,17 @@ clip in the row is queued. Transport notes show play/stop/record state.
 A full refresh is sent every 1.2 s to recover from lost packets; only changes
 are sent in between.
 
+In Note, Chord, Step, Project and Custom modes the unit owns the pad grid and
+its LEDs. The app stops sending pad/scene LED frames and restores the full
+session grid when the unit reports Session again (the unit clears its own grid
+on every mode change).
+
 ## Controls
 
 | Control | Message | App action |
 | --- | --- | --- |
-| Pads | Notes 0–63 | Launch/stop; selects the pad |
-| Pads (KEYS on) | Notes 0–63 | Write notes into the Wave piano roll |
+| Pads (Session) | Notes 0–63 on the DAW cable | Launch/stop; selects the pad |
+| Pads (Note/Chord) | Notes on the Notes cable | Write keys into the Wave piano roll |
 | Scene 1–8 | Notes 112–119 | Launch scene |
 | Play / Stop | 91 / 93 | Transport |
 | Record | 92 | Toggle master capture |
@@ -118,6 +179,15 @@ for lines 5–8. The app writes four lines (name, engine family, BPM, quantize).
   Reconnect, then tap **REFRESH**; make sure no DAW owns the USB MIDI port.
 - **Pads trigger the wrong slot**: switch BASE 0/36 or FLIP PAD ROWS. If only
   some notes arrive, the unit is in a custom project with a different note map.
+- **Note/Chord pads do nothing**: check the MIDI sheet’s **NOTES** port. If it
+  says `MISSING`, the Android port resolver did not find cable 1; replug the
+  USB cable. Also check that the selected pad is a Wave clip.
+- **Note pads launch clips**: this is the bug fixed in 0.0.3. The hardware mode
+  report should put the app in NOTE or CHORD; if it still shows SESSION, press
+  SESSION and then NOTE once more and include the MIDI sheet’s monitor line.
+- **Firmware warning**: the identity reply is older than 1.2.1.6. Update the
+  APC64 firmware or verify the pad-mode IDs against your build before relying on
+  automatic Note/Chord routing.
 - **Some LEDs stay stale**: LED feedback is throttled to changes plus a 1.2 s
   refresh; wait one refresh or press **LED TEST**.
 - **No device listed**: Android's `MidiManager` is unavailable on a few builds;
@@ -128,8 +198,9 @@ for lines 5–8. The app writes four lines (name, engine family, BPM, quantize).
 
 ## Verification status
 
-The codec, mapping, palette and handshake bytes are unit-tested
-(`Apc64CodecTest`) and the parser is tested with fragmented/running-status
-streams (`MidiStreamParserTest`). A physical APC64 was not attached to the CI
-runner, so device-specific firmware quirks should be reported with the
-debug log line shown in the MIDI sheet.
+The codec, mode report, identity firmware, port-role mapping, palette and
+handshake bytes are unit-tested (`Apc64CodecTest`); the parser is tested with
+fragmented/running-status streams (`MidiStreamParserTest`); and chord grouping
+is covered by `NoteEntryTest`. A physical APC64 was not attached to the CI
+runner, so device-specific firmware quirks should be reported with the debug
+log line shown in the MIDI sheet.

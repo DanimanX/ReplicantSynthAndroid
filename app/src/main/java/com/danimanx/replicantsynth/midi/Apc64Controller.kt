@@ -27,15 +27,29 @@ data class Apc64State(
     val padBaseNote: Int = Apc64Codec.PAD_BASE_DAW,
     val flipRows: Boolean = true,
     val ledFeedback: Boolean = true,
-    val noteInput: Boolean = false,
+    val padMode: Apc64PadMode = Apc64PadMode.SESSION,
+    val firmware: String? = null,
+    val firmwareSupported: Boolean = true,
+    val dawPort: String? = null,
+    val notesPort: String? = null,
 ) {
     val connected: Boolean get() = connectedId != null
+    val notesPortOpen: Boolean get() = notesPort != null
+    val modeLabel: String get() = padMode.label
 }
 
 sealed class Apc64Event {
     data class Pad(val pad: Int, val velocity: Int, val pressed: Boolean) : Apc64Event()
+
     /** Raw key from the APC64 Notes/Chord surface, used by the piano roll. */
     data class Key(val note: Int, val velocity: Int, val pressed: Boolean) : Apc64Event()
+
+    /** The unit changed its own pad mode (Session, Note, Chord, Step, ...). */
+    data class Mode(val mode: Apc64PadMode) : Apc64Event()
+
+    /** Release every key the unit was holding (mode change or unplug). */
+    data object AllKeysOff : Apc64Event()
+
     data class Scene(val row: Int) : Apc64Event()
     data class Transport(val action: TransportAction) : Apc64Event()
     data class Encoder(val delta: Int) : Apc64Event()
@@ -50,21 +64,32 @@ sealed class Apc64Event {
 enum class TransportAction { PLAY, STOP, RECORD }
 
 /**
- * USB MIDI connection and APC64 profile. Detection is by the USB MIDI device
- * name; the controller sends the Akai mode SysEx on connect so the 64-pad
- * surface is unlocked without Ableton Live.
+ * USB MIDI connection and APC64 profile. The APC64 exposes four USB MIDI
+ * cables: the DAW cable carries the host-drawn session grid and every side
+ * button, while the Notes cable carries expressive Note/Chord mode pads. The
+ * app opens both so the hardware's own NOTE and CHORD modes never leak into
+ * session clip launching.
+ *
+ * Detection is by the USB MIDI device name; the controller sends the Akai mode
+ * SysEx on connect so the 64-pad surface is unlocked without Ableton Live.
  */
 class Apc64Controller(
     context: Context,
     private val onEvent: (Apc64Event) -> Unit,
 ) {
+    private enum class Source { DAW, NOTES }
+
+    private data class InboundPort(
+        val source: Source,
+        val port: MidiOutputPort,
+        val receiver: MidiReceiver,
+    )
+
     private val appContext = context.applicationContext
     private val midiManager =
         appContext.getSystemService(Context.MIDI_SERVICE) as? MidiManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private val prefs = appContext.getSharedPreferences("apc64", Context.MODE_PRIVATE)
-    private val parser = MidiStreamParser()
-    private val parserLock = Any()
     private val sendLock = Any()
 
     private val _state = MutableStateFlow(
@@ -73,15 +98,13 @@ class Apc64Controller(
             padBaseNote = prefs.getInt("padBase", Apc64Codec.PAD_BASE_DAW),
             flipRows = prefs.getBoolean("flipRows", true),
             ledFeedback = prefs.getBoolean("ledFeedback", true),
-            noteInput = prefs.getBoolean("noteInput", false),
         ),
     )
     val state: StateFlow<Apc64State> = _state.asStateFlow()
 
     private var device: MidiDevice? = null
     private var sendPort: MidiInputPort? = null
-    private var receivePort: MidiOutputPort? = null
-    private var receiver: MidiReceiver? = null
+    private val inbound = mutableListOf<InboundPort>()
     private var savedDeviceName: String? = prefs.getString("deviceName", null)
     private var started = false
 
@@ -166,65 +189,62 @@ class Apc64Controller(
     }
 
     private fun openPorts(opened: MidiDevice, info: MidiDeviceInfo) {
-        var inputIndex = -1
-        var outputIndex = -1
-        for (port in info.ports) {
-            when (port.type) {
-                MidiDeviceInfo.PortInfo.TYPE_INPUT -> if (inputIndex < 0) inputIndex = port.portNumber
-                MidiDeviceInfo.PortInfo.TYPE_OUTPUT -> if (outputIndex < 0) outputIndex = port.portNumber
-            }
-        }
-        if (inputIndex < 0 || outputIndex < 0) {
+        val inputs = info.ports.filter { it.type == MidiDeviceInfo.PortInfo.TYPE_INPUT }
+        val outputs = info.ports.filter { it.type == MidiDeviceInfo.PortInfo.TYPE_OUTPUT }
+        if (inputs.isEmpty() || outputs.isEmpty()) {
             _state.update {
                 it.copy(error = "APC64 has no MIDI input/output pair")
             }
             opened.close()
             return
         }
-        val input = runCatching { opened.openInputPort(inputIndex) }.getOrNull()
-        val output = runCatching { opened.openOutputPort(outputIndex) }.getOrNull()
-        if (input == null || output == null) {
-            runCatching { input?.close() }
-            runCatching { output?.close() }
+
+        val dawInputInfo = pickPort(inputs, Apc64PortRole.DAW, fallbackNumber = 0)
+            ?: inputs.first()
+        val dawOutputInfo = pickPort(outputs, Apc64PortRole.DAW, fallbackNumber = 0)
+            ?: outputs.first()
+        val notesOutputInfo = pickPort(
+            outputs,
+            Apc64PortRole.NOTES,
+            fallbackNumber = 1,
+            excludePort = dawOutputInfo.portNumber,
+        )
+
+        val input = runCatching { opened.openInputPort(dawInputInfo.portNumber) }.getOrNull()
+        if (input == null) {
             opened.close()
-            _state.update { it.copy(error = "Could not open APC64 ports") }
+            _state.update { it.copy(error = "Could not open APC64 DAW input") }
             return
         }
 
-        val newReceiver = object : MidiReceiver() {
-            override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
-                val messages = try {
-                    synchronized(parserLock) { parser.feed(msg, offset, count) }
-                } catch (error: Exception) {
-                    Log.w(TAG, "MIDI parse error", error)
-                    return
-                }
-                if (messages.isNotEmpty()) {
-                    mainHandler.post { handleMessages(messages) }
-                }
-            }
-
-            override fun onFlush() {
-                synchronized(parserLock) { parser.reset() }
-            }
+        if (!attachOutput(opened, dawOutputInfo, Source.DAW)) {
+            runCatching { input.close() }
+            opened.close()
+            _state.update { it.copy(error = "Could not open APC64 DAW output") }
+            return
         }
-        output.connect(newReceiver)
+        val notesAttached = notesOutputInfo != null &&
+            attachOutput(opened, notesOutputInfo, Source.NOTES)
 
         device = opened
         sendPort = input
-        receivePort = output
-        receiver = newReceiver
         savedDeviceName = deviceName(info)
         prefs.edit().putString("deviceName", savedDeviceName).apply()
         ledCache.fill(-1)
         sceneCache.fill(-1)
         transportCache = -1
+        lastRefreshMs = 0L
         _state.update {
             it.copy(
                 connectedId = info.id,
                 connectedName = deviceName(info),
                 devices = it.devices,
                 error = null,
+                padMode = Apc64PadMode.SESSION,
+                firmware = null,
+                firmwareSupported = true,
+                dawPort = portLabel(dawOutputInfo),
+                notesPort = notesOutputInfo?.takeIf { notesAttached }?.let { portLabel(it) },
             )
         }
 
@@ -232,26 +252,78 @@ class Apc64Controller(
         mainHandler.postDelayed({
             if (sendPort === input) {
                 Apc64Codec.handshake().forEach { send(it) }
+                // Some hubs drop the first identity request; ask once more so
+                // the firmware validation can complete without a replug.
+                mainHandler.postDelayed({
+                    if (sendPort === input && _state.value.firmware == null) {
+                        send(Apc64Codec.identityRequest)
+                    }
+                }, 900)
             }
         }, 180)
     }
 
+    private fun attachOutput(
+        opened: MidiDevice,
+        portInfo: MidiDeviceInfo.PortInfo,
+        source: Source,
+    ): Boolean {
+        val port = runCatching { opened.openOutputPort(portInfo.portNumber) }.getOrNull()
+            ?: return false
+        val parser = MidiStreamParser()
+        val parserLock = Any()
+        val receiver = object : MidiReceiver() {
+            override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
+                val messages = try {
+                    synchronized(parserLock) { parser.feed(msg, offset, count) }
+                } catch (error: Exception) {
+                    Log.w(TAG, "MIDI parse error on $source", error)
+                    return
+                }
+                if (messages.isNotEmpty()) {
+                    mainHandler.post { handleMessages(messages, source) }
+                }
+            }
+
+            override fun onFlush() {
+                synchronized(parserLock) { parser.reset() }
+            }
+        }
+        val connected = runCatching { port.connect(receiver) }.isSuccess
+        if (!connected) {
+            runCatching { port.close() }
+            return false
+        }
+        inbound += InboundPort(source, port, receiver)
+        return true
+    }
+
     fun disconnect() {
-        val output = receivePort
-        val rec = receiver
-        if (output != null && rec != null) runCatching { output.disconnect(rec) }
-        runCatching { receivePort?.close() }
+        inbound.forEach { slot ->
+            runCatching { slot.port.disconnect(slot.receiver) }
+            runCatching { slot.port.close() }
+        }
+        inbound.clear()
         runCatching { sendPort?.close() }
         runCatching { device?.close() }
-        receivePort = null
         sendPort = null
-        receiver = null
         device = null
-        synchronized(parserLock) { parser.reset() }
         ledCache.fill(-1)
         sceneCache.fill(-1)
         transportCache = -1
-        _state.update { it.copy(connectedId = null, connectedName = null) }
+        lastRefreshMs = 0L
+        _state.update {
+            it.copy(
+                connectedId = null,
+                connectedName = null,
+                padMode = Apc64PadMode.SESSION,
+                firmware = null,
+                firmwareSupported = true,
+                dawPort = null,
+                notesPort = null,
+            )
+        }
+        onEvent(Apc64Event.AllKeysOff)
     }
 
     fun setPadBaseNote(base: Int) {
@@ -265,18 +337,6 @@ class Apc64Controller(
     fun setFlipRows(flip: Boolean) {
         prefs.edit().putBoolean("flipRows", flip).apply()
         _state.update { it.copy(flipRows = flip) }
-        ledCache.fill(-1)
-    }
-
-    /** Notes mode: pad-range note messages become piano-roll keys, not clips. */
-    fun setNoteInput(enabled: Boolean) {
-        prefs.edit().putBoolean("noteInput", enabled).apply()
-        _state.update { it.copy(noteInput = enabled) }
-        if (enabled) {
-            for (note in 0 until Apc64Codec.PAD_COUNT) {
-                send(Apc64Codec.led(note, Apc64Codec.COLOR_BLUE, Apc64Codec.LED_HALF))
-            }
-        }
         ledCache.fill(-1)
     }
 
@@ -320,41 +380,51 @@ class Apc64Controller(
         val fullRefresh = now - lastRefreshMs > 1200
         if (fullRefresh) lastRefreshMs = now
 
-        for (pad in 0 until Apc64Codec.PAD_COUNT) {
-            val packed = states.getOrElse(pad) { 0 }
-            val state = (packed shr 4) and 0x0F
-            val kind = packed and 0x0F
-            val (color, channel) = Apc64Codec.ledColorFor(state, kind, selectedPad == pad)
-            val key = color or (channel shl 8)
-            if (ledCache[pad] != key || fullRefresh) {
-                val note = Apc64Codec.noteForPad(pad, current.padBaseNote, current.flipRows)
-                send(Apc64Codec.led(note, color, channel))
-                ledCache[pad] = key
-            }
-        }
-
-        for (row in 0 until 8) {
-            var color = 0
-            var channel = Apc64Codec.LED_FULL
-            for (col in 0 until 8) {
-                val packed = states.getOrElse(row * 8 + col) { 0 }
+        // In Note/Chord/Step/Project/Custom the unit owns the pad grid. Sending
+        // host LED frames there is ignored by the hardware, but it would fight
+        // the mode display if a future firmware starts listening. On return to
+        // Session the caches are invalidated, so the whole grid is redrawn.
+        if (current.padMode.hostOwnsPads) {
+            for (pad in 0 until Apc64Codec.PAD_COUNT) {
+                val packed = states.getOrElse(pad) { 0 }
                 val state = (packed shr 4) and 0x0F
                 val kind = packed and 0x0F
-                if (kind == 0) continue
-                if (state == 2) {
-                    color = Apc64Codec.COLOR_GREEN
-                    channel = Apc64Codec.LED_FULL
-                    break
-                }
-                if (state == 1) {
-                    color = Apc64Codec.COLOR_YELLOW
-                    channel = Apc64Codec.LED_BLINK
+                val (color, channel) = Apc64Codec.ledColorFor(state, kind, selectedPad == pad)
+                val key = color or (channel shl 8)
+                if (ledCache[pad] != key || fullRefresh) {
+                    val note = Apc64Codec.noteForPad(
+                        pad,
+                        current.padBaseNote,
+                        current.flipRows,
+                    )
+                    send(Apc64Codec.led(note, color, channel))
+                    ledCache[pad] = key
                 }
             }
-            val key = color or (channel shl 8)
-            if (sceneCache[row] != key || fullRefresh) {
-                send(Apc64Codec.led(Apc64Codec.SCENE_FIRST + row, color, channel))
-                sceneCache[row] = key
+
+            for (row in 0 until 8) {
+                var color = 0
+                var channel = Apc64Codec.LED_FULL
+                for (col in 0 until 8) {
+                    val packed = states.getOrElse(row * 8 + col) { 0 }
+                    val state = (packed shr 4) and 0x0F
+                    val kind = packed and 0x0F
+                    if (kind == 0) continue
+                    if (state == 2) {
+                        color = Apc64Codec.COLOR_GREEN
+                        channel = Apc64Codec.LED_FULL
+                        break
+                    }
+                    if (state == 1) {
+                        color = Apc64Codec.COLOR_YELLOW
+                        channel = Apc64Codec.LED_BLINK
+                    }
+                }
+                val key = color or (channel shl 8)
+                if (sceneCache[row] != key || fullRefresh) {
+                    send(Apc64Codec.led(Apc64Codec.SCENE_FIRST + row, color, channel))
+                    sceneCache[row] = key
+                }
             }
         }
 
@@ -378,90 +448,35 @@ class Apc64Controller(
         for (row in 0 until 8) send(Apc64Codec.led(Apc64Codec.SCENE_FIRST + row, 0))
     }
 
-    private fun handleMessages(messages: List<MidiMessage>) {
-        val current = _state.value
+    private fun handleMessages(messages: List<MidiMessage>, source: Source) {
         for (message in messages) {
-            val summary = describe(message)
+            val summary = describe(message, source)
             if (summary.isNotBlank()) _state.update { it.copy(lastMessage = summary) }
             when (message) {
-                is MidiMessage.NoteOn -> {
-                    val scene = Apc64Codec.sceneForNote(message.note)
-                    if (scene != null) {
-                        onEvent(Apc64Event.Scene(scene))
-                        continue
-                    }
-                    when (message.note) {
-                        Apc64Codec.NOTE_PLAY -> {
-                            onEvent(Apc64Event.Transport(TransportAction.PLAY)); continue
-                        }
-                        Apc64Codec.NOTE_STOP -> {
-                            onEvent(Apc64Event.Transport(TransportAction.STOP)); continue
-                        }
-                        Apc64Codec.NOTE_RECORD -> {
-                            onEvent(Apc64Event.Transport(TransportAction.RECORD)); continue
-                        }
-                        Apc64Codec.NOTE_CLIP_STOP -> {
-                            onEvent(Apc64Event.ClipStop); continue
-                        }
-                        Apc64Codec.NOTE_MUTE -> {
-                            onEvent(Apc64Event.Mute(true)); continue
-                        }
-                        Apc64Codec.NOTE_SOLO -> {
-                            onEvent(Apc64Event.Solo(true)); continue
-                        }
-                        Apc64Codec.NOTE_SHIFT -> {
-                            onEvent(Apc64Event.Shift(true)); continue
-                        }
-                        in Apc64Codec.TRACK_SELECT_FIRST..Apc64Codec.TRACK_SELECT_LAST -> {
-                            onEvent(
-                                Apc64Event.TrackSelect(
-                                    message.note - Apc64Codec.TRACK_SELECT_FIRST,
-                                ),
-                            )
-                            continue
-                        }
-                    }
-                    if (current.noteInput) {
-                        onEvent(Apc64Event.Key(message.note, message.velocity, true))
-                        continue
-                    }
-                    val pad = Apc64Codec.padForNote(
-                        message.note, current.padBaseNote, current.flipRows,
-                    )
-                    if (pad != null) {
-                        onEvent(Apc64Event.Pad(pad, message.velocity, true))
-                    }
+                is MidiMessage.SysEx -> if (source == Source.DAW) {
+                    handleSysEx(message.bytes)
                 }
-                is MidiMessage.NoteOff -> {
-                    when (message.note) {
-                        Apc64Codec.NOTE_MUTE -> {
-                            onEvent(Apc64Event.Mute(false)); continue
-                        }
-                        Apc64Codec.NOTE_SOLO -> {
-                            onEvent(Apc64Event.Solo(false)); continue
-                        }
-                        Apc64Codec.NOTE_SHIFT -> {
-                            onEvent(Apc64Event.Shift(false)); continue
-                        }
-                    }
-                    if (current.noteInput) {
-                        onEvent(Apc64Event.Key(message.note, 0, false))
-                        continue
-                    }
-                    val pad = Apc64Codec.padForNote(
-                        message.note, current.padBaseNote, current.flipRows,
-                    )
-                    if (pad != null) {
-                        onEvent(Apc64Event.Pad(pad, 0, false))
-                    }
-                }
+                is MidiMessage.NoteOn -> handleNote(
+                    message.note,
+                    message.velocity,
+                    pressed = true,
+                    source = source,
+                )
+                is MidiMessage.NoteOff -> handleNote(
+                    message.note,
+                    velocity = 0,
+                    pressed = false,
+                    source = source,
+                )
                 is MidiMessage.ControlChange -> {
-                    if (message.controller == Apc64Codec.CC_ENCODER) {
+                    if (source == Source.DAW &&
+                        message.controller == Apc64Codec.CC_ENCODER
+                    ) {
                         onEvent(Apc64Event.Encoder(Apc64Codec.encoderDelta(message.value)))
                     }
                 }
                 is MidiMessage.PitchBend -> {
-                    if (message.channel in 0..7) {
+                    if (source == Source.DAW && message.channel in 0..7) {
                         onEvent(
                             Apc64Event.TouchStrip(
                                 message.channel,
@@ -475,6 +490,112 @@ class Apc64Controller(
         }
     }
 
+    private fun handleNote(
+        note: Int,
+        velocity: Int,
+        pressed: Boolean,
+        source: Source,
+    ) {
+        // If the app connected while the unit was already in Note/Chord view,
+        // the mode report may predate the connection. A Notes-cable event is a
+        // reliable fallback: it cannot be a session clip launch.
+        if (source == Source.NOTES) {
+            val before = _state.value.padMode
+            if (before.hostOwnsPads || before == Apc64PadMode.UNKNOWN) {
+                applyPadMode(Apc64PadMode.NOTE)
+            }
+        }
+        val current = _state.value
+        val route = Apc64Codec.routeNote(
+            mode = current.padMode,
+            fromNotesPort = source == Source.NOTES,
+            note = note,
+        )
+        when (route) {
+            Apc64NoteRoute.KEY -> onEvent(Apc64Event.Key(note, velocity, pressed))
+            Apc64NoteRoute.CLIP -> {
+                val pad = Apc64Codec.padForNote(
+                    note,
+                    current.padBaseNote,
+                    current.flipRows,
+                )
+                if (pad != null) onEvent(Apc64Event.Pad(pad, velocity, pressed))
+            }
+            Apc64NoteRoute.IGNORE -> Unit
+            Apc64NoteRoute.CONTROL -> handleControlNote(note, pressed)
+        }
+    }
+
+    /** Scene, transport, mute/solo, shift and track-select notes on the DAW cable. */
+    private fun handleControlNote(note: Int, pressed: Boolean) {
+        if (pressed) {
+            val scene = Apc64Codec.sceneForNote(note)
+            if (scene != null) {
+                onEvent(Apc64Event.Scene(scene))
+                return
+            }
+            when (note) {
+                Apc64Codec.NOTE_PLAY -> onEvent(Apc64Event.Transport(TransportAction.PLAY))
+                Apc64Codec.NOTE_STOP -> onEvent(Apc64Event.Transport(TransportAction.STOP))
+                Apc64Codec.NOTE_RECORD -> onEvent(Apc64Event.Transport(TransportAction.RECORD))
+                Apc64Codec.NOTE_CLIP_STOP -> onEvent(Apc64Event.ClipStop)
+                Apc64Codec.NOTE_MUTE -> onEvent(Apc64Event.Mute(true))
+                Apc64Codec.NOTE_SOLO -> onEvent(Apc64Event.Solo(true))
+                Apc64Codec.NOTE_SHIFT -> onEvent(Apc64Event.Shift(true))
+                in Apc64Codec.TRACK_SELECT_FIRST..Apc64Codec.TRACK_SELECT_LAST -> {
+                    onEvent(Apc64Event.TrackSelect(note - Apc64Codec.TRACK_SELECT_FIRST))
+                }
+            }
+        } else {
+            when (note) {
+                Apc64Codec.NOTE_MUTE -> onEvent(Apc64Event.Mute(false))
+                Apc64Codec.NOTE_SOLO -> onEvent(Apc64Event.Solo(false))
+                Apc64Codec.NOTE_SHIFT -> onEvent(Apc64Event.Shift(false))
+            }
+        }
+    }
+
+    private fun handleSysEx(bytes: ByteArray) {
+        val mode = Apc64Codec.padModeFromSysex(bytes)
+        if (mode != null) {
+            applyPadMode(mode)
+            return
+        }
+        val firmware = Apc64Codec.firmwareFromIdentity(bytes) ?: return
+        val supported = Apc64Codec.firmwareSupported(firmware)
+        _state.update {
+            it.copy(
+                firmware = firmware,
+                firmwareSupported = supported,
+                lastMessage = "FW $firmware",
+            )
+        }
+        if (!supported) {
+            _state.update {
+                it.copy(
+                    error = "APC64 firmware $firmware is older than " +
+                        Apc64Codec.VALIDATED_FIRMWARE,
+                )
+            }
+        }
+    }
+
+    private fun applyPadMode(mode: Apc64PadMode) {
+        val previous = _state.value.padMode
+        if (mode == previous) return
+        _state.update { it.copy(padMode = mode, lastMessage = "MODE ${mode.label}") }
+        // The unit clears its host-drawn grid on every mode change; force a
+        // complete redraw when Session becomes host-owned again.
+        ledCache.fill(-1)
+        sceneCache.fill(-1)
+        transportCache = -1
+        lastRefreshMs = 0L
+        if (previous.keySurface && !mode.keySurface) {
+            onEvent(Apc64Event.AllKeysOff)
+        }
+        onEvent(Apc64Event.Mode(mode))
+    }
+
     private fun send(bytes: ByteArray) {
         val port = sendPort ?: return
         synchronized(sendLock) {
@@ -484,6 +605,27 @@ class Apc64Controller(
                     _state.update { st -> st.copy(error = "MIDI send failed: ${it.message}") }
                 }
         }
+    }
+
+    private fun pickPort(
+        ports: List<MidiDeviceInfo.PortInfo>,
+        role: Apc64PortRole,
+        fallbackNumber: Int,
+        excludePort: Int = -1,
+    ): MidiDeviceInfo.PortInfo? {
+        val candidates = ports.filter { it.portNumber != excludePort }
+        return candidates.firstOrNull {
+            Apc64Codec.portRole(portName(it), it.portNumber) == role
+        } ?: candidates.firstOrNull { it.portNumber == fallbackNumber }
+            ?: candidates.firstOrNull()
+    }
+
+    private fun portName(port: MidiDeviceInfo.PortInfo): String =
+        runCatching { port.name }.getOrNull().orEmpty()
+
+    private fun portLabel(port: MidiDeviceInfo.PortInfo): String {
+        val name = portName(port)
+        return if (name.isNotBlank()) name else "PORT ${port.portNumber + 1}"
     }
 
     private fun deviceName(info: MidiDeviceInfo): String =
@@ -496,9 +638,17 @@ class Apc64Controller(
             info.properties.getString(MidiDeviceInfo.PROPERTY_MANUFACTURER)
                 ?.contains("Akai", ignoreCase = true) == true
 
-    private fun describe(message: MidiMessage): String = when (message) {
-        is MidiMessage.NoteOn -> "NOTE ${message.note} VEL ${message.velocity}"
-        is MidiMessage.NoteOff -> "NOTE OFF ${message.note}"
+    private fun describe(message: MidiMessage, source: Source): String = when (message) {
+        is MidiMessage.NoteOn -> if (source == Source.NOTES) {
+            "KEY ${message.note} VEL ${message.velocity}"
+        } else {
+            "NOTE ${message.note} VEL ${message.velocity}"
+        }
+        is MidiMessage.NoteOff -> if (source == Source.NOTES) {
+            "KEY OFF ${message.note}"
+        } else {
+            "NOTE OFF ${message.note}"
+        }
         is MidiMessage.ControlChange -> "CC ${message.controller} = ${message.value}"
         is MidiMessage.PitchBend -> "PB ${message.channel} ${message.value}"
         is MidiMessage.SysEx -> "SYSEX ${message.bytes.size} B"
@@ -509,4 +659,3 @@ class Apc64Controller(
         private const val TAG = "ReplicantApc64"
     }
 }
-

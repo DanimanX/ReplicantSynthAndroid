@@ -18,6 +18,7 @@ import com.danimanx.replicantsynth.audio.EngineHolder
 import com.danimanx.replicantsynth.audio.SampleLibrary
 import com.danimanx.replicantsynth.midi.Apc64Controller
 import com.danimanx.replicantsynth.midi.Apc64Event
+import com.danimanx.replicantsynth.midi.Apc64PadMode
 import com.danimanx.replicantsynth.midi.Apc64State
 import com.danimanx.replicantsynth.midi.NoteGroupCursor
 import com.danimanx.replicantsynth.midi.TransportAction
@@ -118,6 +119,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val midi = Apc64Controller(application) { event -> handleMidi(event) }
     val midiState: StateFlow<Apc64State> = midi.state
     private val noteEntry = NoteGroupCursor(ClipLimits.STEPS)
+    /** Raw APC64 key -> (pad, transposed note) so release follows a pad change. */
+    private val activeApcKeys = HashMap<Int, Pair<Int, Int>>()
+    private var apcKeyHintShown = false
 
     val selectedClip: Clip
         get() = project.clips[selectedPad.coerceIn(0, ClipLimits.PADS - 1)]
@@ -316,6 +320,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectPad(pad: Int, tab: Int = selectedTab) {
         selectedPad = pad.coerceIn(0, ClipLimits.PADS - 1)
         selectedTab = tab
+        apcKeyHintShown = false
     }
 
     fun selectTab(tab: Int) {
@@ -696,12 +701,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         message = "Converted ${clip.midiNotes.size} steps to MIDI notes"
     }
 
-    fun setApcNoteInput(enabled: Boolean) {
-        midi.setNoteInput(enabled)
-        noteEntry.reset(midiCursor)
-        message = if (enabled) "APC64 keys → piano roll" else "APC64 pads → clip grid"
-    }
-
     fun nudgeApcOctave(octave: Int) {
         apcOctave = octave.coerceIn(-2, 2)
     }
@@ -934,11 +933,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleMidi(event: Apc64Event) {
         when (event) {
             is Apc64Event.Key -> {
-                val pad = editorPad ?: selectedPad
-                val clip = project.clips[pad.coerceIn(0, ClipLimits.PADS - 1)]
-                if (clip.kind != ClipKind.WAVE) return
+                val pad = (editorPad ?: selectedPad).coerceIn(0, ClipLimits.PADS - 1)
+                val clip = project.clips[pad]
                 val note = (event.note + apcOctave * 12).coerceIn(0, 127)
                 if (event.pressed) {
+                    if (clip.kind != ClipKind.WAVE) {
+                        if (!apcKeyHintShown) {
+                            apcKeyHintShown = true
+                            message = "APC64 ${midiState.value.modeLabel} mode · " +
+                                "select a WAVE clip to write notes"
+                        }
+                        return
+                    }
+                    activeApcKeys[event.note] = pad to note
                     val step = noteEntry.press(SystemClock.uptimeMillis(), midiLength)
                     midiCursor = step
                     addMidiNote(
@@ -950,9 +957,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         advance = false,
                     )
                 } else {
-                    engine.previewNote(clip.index, note, 0, false)
+                    val (targetPad, playedNote) = activeApcKeys.remove(event.note)
+                        ?: (pad to note)
+                    engine.previewNote(targetPad, playedNote, 0, false)
                 }
             }
+            is Apc64Event.Mode -> onApcMode(event.mode)
+            Apc64Event.AllKeysOff -> releaseApcKeys()
             is Apc64Event.Pad -> if (event.pressed) togglePad(event.pad)
             is Apc64Event.Scene -> launchScene(event.row)
             is Apc64Event.Transport -> when (event.action) {
@@ -971,6 +982,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Apc64Event.ClipStop -> stopAll()
             is Apc64Event.Shift -> Unit
         }
+    }
+
+    private fun onApcMode(mode: Apc64PadMode) {
+        if (!mode.keySurface) releaseApcKeys()
+        apcKeyHintShown = false
+        message = when (mode) {
+            Apc64PadMode.NOTE -> "APC64 NOTE mode · keys → piano roll"
+            Apc64PadMode.CHORD -> "APC64 CHORD mode · chords → piano roll"
+            Apc64PadMode.SESSION -> "APC64 SESSION mode · pads → clips"
+            Apc64PadMode.OVERVIEW -> "APC64 OVERVIEW mode · pads → clips"
+            else -> "APC64 ${mode.label} mode · pads stay on the unit"
+        }
+    }
+
+    private fun releaseApcKeys() {
+        for ((pad, note) in activeApcKeys.values) {
+            engine.previewNote(pad, note, 0, false)
+        }
+        activeApcKeys.clear()
     }
 
     private fun applyTouchStrip(index: Int, value: Float) {

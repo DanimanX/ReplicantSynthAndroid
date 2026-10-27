@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.0.3 — 2026-10-27
+
+### APC64 Note/Chord routing
+- The app now reads the APC64's pad-mode report instead of exposing an app-side
+  **APC64 KEYS** switch. Session pads launch clips; the hardware's own **NOTE**
+  and **CHORD** modes write into the Wave piano roll.
+- Opens the **DAW** and **Notes** USB MIDI cables separately, resolving them by
+  name with cable-number fallbacks. Note/Chord pads no longer fall through a
+  merged or mis-ordered port into scene/clip launches.
+- Chord Mode's simultaneous note-ons share one piano-roll step through the
+  existing 60 ms group window.
+- Pad and scene LEDs stop updating while the unit owns the grid in Note, Chord,
+  Step, Project or Custom mode; returning to Session forces a full redraw.
+- Held keys are released on mode changes and unplug, preventing stuck preview
+  voices.
+- The identity reply is parsed and the MIDI sheet shows the connected firmware;
+  firmware older than the validated **1.2.1.6** baseline is flagged.
+- Documented the firmware/Bitwig pad-mode map: 0 Session, 2 Note, 3 Chord, 6 Step,
+  8 Project, 9 Custom.
+
+### Fixes
+- Note/Chord pads are no longer mistaken for scenes, transport or track-select
+  when their pitches overlap control note numbers on the Notes cable.
+- The Note/Chord input path stays out of session launching even if Android
+  merges the USB MIDI cables.
+
+### Verification
+- 36,112 host checks, 0 failures.
+- 43 JVM tests (including pad-mode reports 0/2/3/6/9, identity firmware,
+  port roles and chord grouping), 0 failures.
+- Debug APK builds for arm64-v8a and x86_64.
+
 ## 0.0.2 — 2026-10-26
 
 ### Replicant909

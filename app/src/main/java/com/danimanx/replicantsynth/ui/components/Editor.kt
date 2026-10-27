@@ -55,6 +55,7 @@ import com.danimanx.replicantsynth.model.DrumPresets
 import com.danimanx.replicantsynth.model.WAVE_PRESETS
 import com.danimanx.replicantsynth.model.WaveParam
 import com.danimanx.replicantsynth.model.quantizeLabel
+import com.danimanx.replicantsynth.midi.Apc64PadMode
 import com.danimanx.replicantsynth.ui.MainViewModel
 import com.danimanx.replicantsynth.ui.theme.Amber
 import com.danimanx.replicantsynth.ui.theme.Cyan
@@ -134,17 +135,21 @@ fun WaveMidiEditor(vm: MainViewModel, clip: Clip) {
             }
         }
         Spacer(Modifier.height(5.dp))
+        val keysOn = midi.connected && midi.padMode.keySurface
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             LedButton(
-                label = if (midi.noteInput) "APC64 KEYS ON" else "APC64 KEYS",
-                active = midi.noteInput,
-                color = Lime,
-                enabled = midi.available,
-                onClick = { vm.setApcNoteInput(!midi.noteInput) },
+                label = if (midi.connected) "APC64 ${midi.padMode.label}" else "APC64 OFFLINE",
+                active = keysOn,
+                color = when (midi.padMode) {
+                    Apc64PadMode.CHORD -> Magenta
+                    else -> Lime
+                },
+                enabled = false,
+                onClick = {},
             )
             NeonChip("OCT -", false, Cyan) { vm.nudgeApcOctave(vm.apcOctave - 1) }
             MonoLabel("OCT ${if (vm.apcOctave >= 0) "+" else ""}${vm.apcOctave}", color = Amber, size = 9)
@@ -154,14 +159,22 @@ fun WaveMidiEditor(vm: MainViewModel, clip: Clip) {
             NeonChip("-", false, Cyan) { vm.moveMidiCursor(vm.midiCursor - 1) }
             NeonChip("+", false, Cyan) { vm.moveMidiCursor(vm.midiCursor + 1) }
         }
-        if (midi.noteInput && !midi.connected) {
-            MonoLabel(
-                "CONNECT THE APC64 — NOTES AND CHORDS LAND ON THE CURSOR",
-                color = Amber,
-                size = 8,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+        val hint = when {
+            !midi.connected ->
+                "CONNECT THE APC64 — PRESS NOTE OR CHORD ON THE UNIT"
+            !midi.notesPortOpen ->
+                "APC64 NOTES PORT MISSING — REPLUG THE USB CABLE"
+            !midi.padMode.keySurface ->
+                "PRESS NOTE OR CHORD ON THE APC64 TO PLAY INTO THIS ROLL"
+            else ->
+                "APC64 ${midi.padMode.label} ACTIVE · PADS LAND ON THE CURSOR"
         }
+        MonoLabel(
+            hint,
+            color = if (keysOn) Lime else Amber,
+            size = 8,
+            modifier = Modifier.padding(top = 4.dp),
+        )
         Spacer(Modifier.height(6.dp))
         PianoRoll(vm, clip)
         Spacer(Modifier.height(5.dp))

@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.danimanx.replicantsynth.audio.AudioStats
+import com.danimanx.replicantsynth.midi.Apc64PadMode
 import com.danimanx.replicantsynth.midi.Apc64State
 import com.danimanx.replicantsynth.model.ClipKind
 import com.danimanx.replicantsynth.model.quantizeLabel
@@ -458,13 +459,18 @@ private fun AudioBadge(audio: AudioStats) {
 @Composable
 private fun MidiChip(vm: MainViewModel, midi: Apc64State) {
     val connected = midi.connected
+    val accent = when {
+        !connected -> TextDim
+        midi.padMode == Apc64PadMode.CHORD -> Magenta
+        else -> Lime
+    }
     Row(
         Modifier
             .clip(RoundedCornerShape(8.dp))
-            .background(if (connected) Lime.copy(alpha = 0.12f) else Panel)
+            .background(if (connected) accent.copy(alpha = 0.12f) else Panel)
             .border(
                 1.dp,
-                if (connected) Lime.copy(alpha = 0.6f) else PanelLine,
+                if (connected) accent.copy(alpha = 0.6f) else PanelLine,
                 RoundedCornerShape(8.dp),
             )
             .semantics(mergeDescendants = true) { contentDescription = "MIDI DEVICE" }
@@ -475,13 +481,13 @@ private fun MidiChip(vm: MainViewModel, midi: Apc64State) {
         Icon(
             Icons.Filled.Usb,
             contentDescription = "MIDI",
-            tint = if (connected) Lime else TextDim,
+            tint = if (connected) accent else TextDim,
             modifier = Modifier.size(13.dp),
         )
         Spacer(Modifier.width(5.dp))
         MonoLabel(
-            if (connected) "APC64" else "MIDI",
-            color = if (connected) Lime else TextMid,
+            if (connected) "APC64 ${midi.padMode.label}" else "MIDI",
+            color = if (connected) accent else TextMid,
             size = 8,
         )
     }
@@ -551,7 +557,7 @@ private fun StatusBar(vm: MainViewModel, audio: AudioStats, midi: Apc64State) {
         MonoLabel("$clips CLIPS · 8 SCENES · 64 PADS", color = TextDim, size = 7)
         Spacer(Modifier.weight(1f))
         MonoLabel(
-            if (midi.connected) "APC64 LINK" else "MIDI SCAN",
+            if (midi.connected) "APC64 ${midi.padMode.label}" else "MIDI SCAN",
             color = if (midi.connected) Lime else TextDim,
             size = 7,
         )

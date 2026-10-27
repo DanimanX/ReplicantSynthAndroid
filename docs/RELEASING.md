@@ -2,13 +2,13 @@
 
 ## Versioning
 
-`app/build.gradle.kts` defaults to `versionName = "0.0.2"` and
-`versionCode = 2`. CI can override both:
+`app/build.gradle.kts` defaults to `versionName = "0.0.3"` and
+`versionCode = 3`. CI can override both:
 
 ```bash
 ./gradlew :app:assembleRelease \
-  -PreplicantVersionName=0.0.2 \
-  -PreplicantVersionCode=2
+  -PreplicantVersionName=0.0.3 \
+  -PreplicantVersionCode=3
 ```
 
 ## Tag build
@@ -26,15 +26,15 @@ both APKs as an artifact and, for a tag, creates a GitHub Release with
 
 The host job independently builds and runs the 36k-check DSP suite.
 
-## Publish 0.0.2
+## Publish 0.0.3
 
 ```bash
-git tag 0.0.2
+git tag 0.0.3
 git push origin main
-git push origin 0.0.2
+git push origin 0.0.3
 ```
 
-The tag workflow creates `ReplicantSynth 0.0.2` with the APK asset. The README
+The tag workflow creates `ReplicantSynth 0.0.3` with the APK asset. The README
 links to the tag release.
 
 ## Release checklist
