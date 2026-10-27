@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.0.4 — 2026-10-27
+
+### APC64 touch strips and Step Sequencer
+- The eight touch strips now light their LED bars. Each value is mirrored back as
+  a pitch bend on the strip's channel, with the bar style on CC 104–111 and the
+  bar colour on CC 112–119, so the LED follows the finger and any other change
+  (knob, encoder, preset). Echoed frames from a merged USB port are ignored.
+- Strip assignment is adaptive: strip 1 is the master, strip 8 the pad gain, and
+  strips 2–7 are the six continuous fields of the focused editor page — the six
+  engine knobs on the new **SOUND** page, the six macros on **FX**, the step
+  fields on **STEPS**, the roll fields on **PIANO**. Pages with fewer fields
+  leave the spare strips dark.
+- Touching a strip (notes 82–89) focuses its field and labels it on the OLED; the
+  editor draws the same eight bars with their parameter names.
+- New **SOUND** menu page per engine, reachable from the cursor cluster and the
+  encoder.
+- The APC64's **STEP SEQ** view now feeds the selected clip: its pads arrive on
+  the Notes cable and become step edits — an isolated press toggles the cursor
+  step, a run of notes advances a 16th clock seeded on that cursor, and a clip the
+  app is playing takes the incoming notes on the engine phase. 909 maps pitch to voices from a configurable drum
+  base note; 303 and Wave take the pitch as the note.
+- The step grids show a live playhead and the incoming step, so the pattern is
+  visible in real time on screen while the unit runs.
+
+### APC64 cursor-cluster menus
+- Pressing the same session pad twice inside 400 ms opens its clip editor, so
+  the menus are reachable without touching the screen (a single press still
+  launches/stops the clip).
+- The four-way cursor cluster (notes 94–97) now walks the clip editor from the
+  hardware: up/down change menu, left/right change field, shift jumps to the
+  first/last field or to the next menu.
+- The encoder edits the focused field and the encoder press (note 90) activates
+  it — launch the clip, load a factory preset, randomise or clear a pattern,
+  toggle gate/accent/slide/hit, or open the FX browser. Outside the editor the
+  encoder still nudges the BPM and the cursors move the 8 × 8 pad selection.
+- Editor pages per engine: CLIP (launch, length, root, gain, pan, mute, solo,
+  loop and pitch), STEPS (303/909 step, note/voice, gate/hit, accent, slide,
+  velocity), PIANO (Wave cursor, pitch row, note length, velocity, octave, chord),
+  FX (insert, 48-slot list, six macros) and PRESET (factory banks, applied only on
+  the encoder press).
+- The focused page, field and value are mirrored in the editor dialog and on the
+  APC64 OLED; the cursor LEDs light amber (up/down) and blue (left/right) while a
+  clip editor is open.
+- The pattern step and drum voice cursors are now shared between the touch UI and
+  the controller, so both always edit the same step.
+- The editor pages list the new SOUND page in the cursor ring, and the header
+  version chip now reads the real build version instead of a hardcoded string.
+
+### Verification
+- 36,112 host checks, 0 failures.
+- 69 JVM tests (editor menus, adaptive strips, strip LED frames, Step Seq clock,
+  pad-mode/firmware/port mapping, cursor and strip notes), 0 failures.
+- Emulator run: clip editors for 303, 909 and Wave, page ring, strip assignment
+  on CLIP/SOUND/STEPS/FX, live playhead and the new MIDI-sheet sections.
+- Not verified on hardware: strip LED brightness, strip touch sensors and Step
+  Seq note capture. The MIDI frames come from the APC64 protocol spec verified on
+  firmware 1.2.1.6.
+
 ## 0.0.3 — 2026-10-27
 
 ### APC64 Note/Chord routing

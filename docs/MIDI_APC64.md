@@ -115,6 +115,83 @@ Scene, transport, mute/solo, clip-stop and track-select buttons keep their
 normal functions while Note/Chord mode is active because the unit reports them
 on the DAW cable.
 
+## Menu navigation (cursor cluster)
+
+The four-way cursor cluster under the pad grid walks the clip editor from the
+hardware. Open a clip — double-tap it on screen, or press the same pad twice
+inside 400 ms on the unit — and the cursors take over the app's menu model:
+
+| Cursor | Action |
+| --- | --- |
+| Up / Down | Previous / next menu page (the pages form a ring) |
+| Left / Right | Previous / next field inside the current page |
+| Shift + Up/Down | Jump to the first / last field of the page |
+| Shift + Left/Right | Previous / next menu page (same as Up/Down) |
+| Encoder twist | Edit the focused field (steps, toggles, choices) |
+| Encoder press (note 90) | Activate the focused field: launch, load preset, randomise, clear, toggle |
+
+The pages depend on the clip's engine:
+
+- **CLIP** — launch, length, root, gain, pan, mute, solo (plus loop and pitch for
+  audio clips).
+- **SOUND** — the six primary engine knobs (303: cutoff, resonance, env mod,
+  decay, accent, volume; Wave: cutoff, resonance, position, detune, spread,
+  level; 909: tune, decay, snappy, tone, accent, level; audio: gain, pitch).
+- **STEPS** (303/909) — focused step, note or drum voice, gate/hit, accent,
+  slide, velocity, randomise, clear.
+- **PIANO** (Wave) — focused step, pitch row, toggle note at the cursor, note
+  length, velocity, APC64 octave, chord mode, clear notes.
+- **FX** — insert on/bypass, the 48-slot effect list, the six macros, FX browser.
+- **PRESET** — the factory bank for this engine; twist to choose, press to load
+  (the preset list is only applied on the encoder press, so auditioning cannot
+  overwrite a pattern by accident).
+
+The focused page and field are mirrored in the editor dialog and on the OLED:
+page name, `n. FIELD`, the live value and the `ENC=EDIT` hint. Preset and effect
+names longer than the eight-character display are truncated there.
+
+While the editor is closed the same cursors walk the 8 × 8 grid instead: left and
+right move one pad, up and down move one row. The encoder keeps nudging the BPM
+until a clip editor is open.
+
+The cursor notes (94–97) and the encoder button (90) come from the Ableton Live
+APC64 remote script; they are side controls, never clip slots, so they cannot
+collide with the pad grid or the scene row.
+
+## Step Sequencer mode
+
+The APC64's **STEP SEQ** view is a sequencer inside the unit: its 8 tracks have
+their own transport and play into USB MIDI, and the unit owns the pad grid and
+its LEDs there. The app cannot draw on that grid, so it reads the Notes cable
+instead and treats the unit's pads as step input for the clip in the editor:
+
+| Situation | What a pad press does |
+| --- | --- |
+| Isolated press | Toggles the cell on the focused step, so the joystick decides where the note goes |
+| A run of notes | Advances one 16th per step time and writes each note, so a sequence keeps its rhythm |
+| App playing that clip | Lands on the engine phase, so the take is exact |
+
+A press on a cell that already holds that note removes it; otherwise the note is
+written with the incoming velocity.
+
+How the incoming note becomes a cell:
+
+- **909** — pitch maps to the drum voice from the unit's drum-pad base note
+  (MIDI sheet: `36` / `40` / `48` / `60`, default 36 = C1). Voice 0 is the
+  lowest pitch.
+- **303** — the pitch becomes the note of that step, gate on.
+- **Wave** — the pitch is inserted as a piano-roll note of the current length.
+- Audio and empty clips ignore the input; the editor shows a hint.
+
+The step index comes from the engine phase when the app is playing that clip,
+so a take lands exactly on the grid. When the unit runs on its own, a stream of
+notes advances a 16th clock seeded on the cursor (from the project BPM), so a
+captured sequence keeps its rhythm instead of collapsing onto one step.
+
+`STEP SEQ TO CLIP` in the MIDI sheet turns this off. The editor's step grids
+show the live playhead, so the pattern being edited is visible in real time on
+screen while the unit shows its own sequence.
+
 ## LED feedback
 
 APC64 LEDs use note-on velocity as a colour palette and the MIDI channel as
@@ -139,6 +216,8 @@ The app uses:
 
 Scenes 112–119 light green when any pad in the row plays, yellow/blink when a
 clip in the row is queued. Transport notes show play/stop/record state.
+The cursor cluster stays dark until a clip editor is open; then up/down light
+amber and left/right blue so the two axes are readable at a glance.
 A full refresh is sent every 1.2 s to recover from lost packets; only changes
 are sent in between.
 
@@ -151,7 +230,7 @@ on every mode change).
 
 | Control | Message | App action |
 | --- | --- | --- |
-| Pads (Session) | Notes 0–63 on the DAW cable | Launch/stop; selects the pad |
+| Pads (Session) | Notes 0–63 on the DAW cable | Launch/stop; selects the pad; a second press within 400 ms opens the clip editor |
 | Pads (Note/Chord) | Notes on the Notes cable | Write keys into the Wave piano roll |
 | Scene 1–8 | Notes 112–119 | Launch scene |
 | Play / Stop | 91 / 93 | Transport |
@@ -159,11 +238,50 @@ on every mode change).
 | Clip Stop | 111 | Stop all clips |
 | Mute / Solo | 109 / 110 | Selected pad mute/solo |
 | Shift | 120 | Reserved |
-| Encoder | CC 90 | BPM ± (two's-complement relative) |
+| Cursor up / down / left / right | Notes 94 / 95 / 96 / 97 | Walk the clip-editor menus |
+| Encoder press | Note 90 | Activate the focused menu field |
+| Strip touch | Notes 82–89 | Focus that strip's field and label it on the OLED |
+| Strip LEDs | Pitch bend + CC 104–111 / 112–119 | Bar position, style and colour |
+| Encoder | CC 90 | BPM ± (two's-complement relative); edits the focused field while the editor is open |
 | Touch strip 1 | Pitch bend ch 1 | Master gain |
 | Touch strip 8 | Pitch bend ch 8 | Selected pad gain |
-| Touch strips 2–7 | Pitch bend ch 2–7 | Selected pad FX macros 1–6 |
+| Touch strips 2–7 | Pitch bend ch 2–7 | Six fields of the focused menu (synth knobs, FX macros, step fields) |
 | OLED | SysEx 0x10 / 0x1A | ReplicantSynth, BPM, quantize |
+
+## Touch strips
+
+Each strip is an absolute 14-bit position on its own pitch-bend channel plus a
+capacitive touch sensor on notes 82–89. The app answers with the messages the
+hardware expects for its LED bar:
+
+| Direction | Message |
+| --- | --- |
+| Strip → host, position | pitch bend, channel 1–8, 14-bit |
+| Strip → host, touch | note-on 82–89 |
+| Host → strip, bar position | pitch bend, channel 1–8, 14-bit |
+| Host → strip, bar style | CC 104–111: 0 off, 1 bar, 3 bipolar |
+| Host → strip, bar colour | CC 112–119, palette index |
+
+The bar works as a servo: the app mirrors every value back on the strip's own
+channel, so the LED follows the finger and also lights up when a value changes
+from anywhere else (a knob, the encoder, a preset). Positions the app sent are
+remembered and ignored if a merged USB port echoes them, so the strip never
+fights the finger.
+
+### Adaptive assignment
+
+The assignment follows the clip-editor menus, so the strips always edit what is
+on screen:
+
+- **Strip 1** — master gain (fixed).
+- **Strip 8** — selected pad gain (fixed).
+- **Strips 2–7** — the six continuous fields of the focused page: the six synth
+  knobs on **SOUND**, the six macros on **FX**, step / note / velocity on
+  **STEPS**, cursor / note / velocity / octave on **PIANO**. Pages with fewer
+  fields (CLIP has four) leave the remaining strips dark instead of guessing.
+
+Touching a strip focuses its field, so the editor and the OLED follow the strip
+you grab. With the clip editor closed the strips stay on the CLIP page.
 
 Touch strips are absolute 14-bit values normalised to 0–1.
 
@@ -195,12 +313,20 @@ for lines 5–8. The app writes four lines (name, engine family, BPM, quantize).
 - **Touch strips do nothing**: they send pitch bend on channels 1–8 in DAW
   mode; the app maps those channels. In a custom project they may be configured
   as CC instead.
+- **Cursors do nothing**: the cluster only walks menus while a clip editor is
+  open; with the editor closed it moves the pad selection. Check the MIDI
+  sheet's monitor line for `NOTE 94`–`NOTE 97` while pressing them, and open
+  a clip with an engine assigned (empty pads have no menus).
 
 ## Verification status
 
-The codec, mode report, identity firmware, port-role mapping, palette and
-handshake bytes are unit-tested (`Apc64CodecTest`); the parser is tested with
-fragmented/running-status streams (`MidiStreamParserTest`); and chord grouping
-is covered by `NoteEntryTest`. A physical APC64 was not attached to the CI
-runner, so device-specific firmware quirks should be reported with the debug
-log line shown in the MIDI sheet.
+The codec, mode report, identity firmware, port-role mapping, palette, handshake
+bytes and cursor/encoder-button notes are unit-tested (`Apc64CodecTest`); the
+parser is tested with fragmented/running-status streams
+(`MidiStreamParserTest`); chord grouping is covered by `NoteEntryTest`; and the
+editor menu model — page ring per engine, field clamping, value text, preset
+indexing, the SOUND page and the adaptive strip layout — is covered by
+`EditorNavTest`; the strip LED frame bytes and strip-touch notes by
+`Apc64CodecTest`; and the Step Sequencer's 16th clock by `StepClockTest`. A physical APC64 was not attached to
+the CI runner, so device-specific firmware quirks should be reported with the
+debug log line shown in the MIDI sheet.

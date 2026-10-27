@@ -4,9 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Version can be overridden by CI: -PreplicantVersionName=0.0.3 -PreplicantVersionCode=3
-val replicantVersionName = (project.findProperty("replicantVersionName") as String?) ?: "0.0.3"
-val replicantVersionCode = ((project.findProperty("replicantVersionCode") as String?) ?: "3").toInt()
+// Version can be overridden by CI: -PreplicantVersionName=0.0.4 -PreplicantVersionCode=4
+val replicantVersionName = (project.findProperty("replicantVersionName") as String?) ?: "0.0.4"
+val replicantVersionCode = ((project.findProperty("replicantVersionCode") as String?) ?: "4").toInt()
 
 // Release signing. CI supplies a keystore through environment variables; local
 // and unsigned builds fall back to the debug key so every release APK installs.
