@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.danimanx.replicantsynth.BuildConfig
 import com.danimanx.replicantsynth.audio.AudioStats
 import com.danimanx.replicantsynth.midi.Apc64PadMode
 import com.danimanx.replicantsynth.midi.Apc64State
@@ -307,7 +308,7 @@ private fun Logo(compact: Boolean) {
                     .border(1.dp, Cyan.copy(alpha = 0.6f), RoundedCornerShape(5.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             ) {
-                MonoLabel("v0.0.2", color = Cyan, size = 8)
+                MonoLabel("v${BuildConfig.VERSION_NAME}", color = Cyan, size = 8)
             }
         }
     }

@@ -34,8 +34,27 @@ enum class Apc64PadMode(val id: Int, val label: String) {
 /** USB MIDI cable exposed by the APC64 (DAW, Notes, MIDI, Custom). */
 enum class Apc64PortRole { DAW, NOTES, CUSTOM, MIDI, UNKNOWN }
 
-/** Where a note event belongs: clip grid, piano-roll key, side control, or nowhere. */
-enum class Apc64NoteRoute { CLIP, KEY, CONTROL, IGNORE }
+/**
+ * The four-way cursor cluster under the pad grid, the "joystick". The unit
+ * sends it as plain note-ons on the DAW cable; the note numbers come from the
+ * Ableton APC64 remote script (up/down/left/right = 94..97).
+ */
+enum class Apc64Arrow(val note: Int, val label: String) {
+    UP(94, "UP"),
+    DOWN(95, "DOWN"),
+    LEFT(96, "LEFT"),
+    RIGHT(97, "RIGHT");
+
+    companion object {
+        fun fromNote(note: Int): Apc64Arrow? = entries.firstOrNull { it.note == note }
+    }
+}
+
+/**
+ * Where a note event belongs: clip grid, piano-roll key, step-sequencer step,
+ * side control, or nowhere.
+ */
+enum class Apc64NoteRoute { CLIP, KEY, STEP, CONTROL, IGNORE }
 
 /**
  * APC64 protocol constants and pure mapping helpers. The layout follows the
@@ -69,6 +88,15 @@ object Apc64Codec {
     const val NOTE_PLAY = 91
     const val NOTE_RECORD = 92
     const val NOTE_STOP = 93
+
+    /** Pressing the encoder: "enter" for the focused menu field. */
+    const val NOTE_ENCODER_BUTTON = 90
+
+    /** Four-way cursor cluster: up, down, left, right. */
+    const val NOTE_ARROW_UP = 94
+    const val NOTE_ARROW_DOWN = 95
+    const val NOTE_ARROW_LEFT = 96
+    const val NOTE_ARROW_RIGHT = 97
     const val NOTE_CLIP_STOP = 111
     const val NOTE_MUTE = 109
     const val NOTE_SOLO = 110
@@ -79,6 +107,27 @@ object Apc64Codec {
     const val SCENE_LAST = 119
     const val TRACK_SELECT_FIRST = 100
     const val TRACK_SELECT_LAST = 107
+
+    /** Strip touch sensors: touch strip 1..8 sends notes 82..89. */
+    const val STRIP_TOUCH_FIRST = 82
+    const val STRIP_TOUCH_LAST = 89
+    const val STRIP_COUNT = 8
+
+    /**
+     * Touch-strip LEDs. The bar position is a pitch bend on the strip's own
+     * channel; the bar style is CC 104..111 and the bar colour CC 112..119
+     * (Akai APC64 protocol, same messages Bitwig's APC64 extension sends).
+     */
+    const val CC_STRIP_MODE_FIRST = 104
+    const val CC_STRIP_COLOR_FIRST = 112
+    const val STRIP_MODE_OFF = 0
+    const val STRIP_MODE_BAR = 1
+    const val STRIP_MODE_BAR_RED = 2
+    const val STRIP_MODE_BIPOLAR = 3
+    const val STRIP_MODE_BIPOLAR_RED = 4
+
+    /** Default lowest note of the unit's drum pads (C1), used by Step Seq input. */
+    const val STEPSEQ_DRUM_BASE = 36
 
     /** Newest firmware whose pad-mode report was verified (Bitwig + live capture). */
     const val VALIDATED_FIRMWARE = "1.2.1.6"
@@ -102,6 +151,12 @@ object Apc64Codec {
 
     fun sceneForNote(note: Int): Int? =
         if (note in SCENE_FIRST..SCENE_LAST) note - SCENE_FIRST else null
+
+    fun arrowForNote(note: Int): Apc64Arrow? = Apc64Arrow.fromNote(note)
+
+    /** Strip index 0..7 for a strip-touch note, or null. */
+    fun stripTouchForNote(note: Int): Int? =
+        if (note in STRIP_TOUCH_FIRST..STRIP_TOUCH_LAST) note - STRIP_TOUCH_FIRST else null
 
     fun ledColorFor(
         state: Int,
@@ -148,6 +203,26 @@ object Apc64Codec {
         (controller and 0x7F).toByte(),
         (value and 0x7F).toByte(),
     )
+
+    /** 14-bit pitch bend; [value] is 0..16383 with 8192 as centre. */
+    fun pitchBend(channel: Int, value: Int): ByteArray {
+        val v = value.coerceIn(0, 16383)
+        return byteArrayOf(
+            (0xE0 or (channel and 0x0F)).toByte(),
+            (v and 0x7F).toByte(),
+            ((v shr 7) and 0x7F).toByte(),
+        )
+    }
+
+    /** Strip bar position as a 14-bit pitch-bend value. */
+    fun stripPosition(value: Float): Int =
+        (value.coerceIn(0f, 1f) * 16383f).toInt()
+
+    fun stripMode(strip: Int, mode: Int): ByteArray =
+        cc(CC_STRIP_MODE_FIRST + strip.coerceIn(0, STRIP_COUNT - 1), mode)
+
+    fun stripColor(strip: Int, color: Int): ByteArray =
+        cc(CC_STRIP_COLOR_FIRST + strip.coerceIn(0, STRIP_COUNT - 1), color)
 
     private fun sysex(payload: IntArray): ByteArray {
         val out = ByteArray(payload.size + 2)
@@ -282,10 +357,12 @@ object Apc64Codec {
     ): Apc64NoteRoute {
         if (fromNotesPort) {
             // Note, Chord and the fallback (mode report not seen yet) are key
-            // surfaces. Step/Project/Custom notes are the unit's own data and
-            // must not be written into the piano roll.
+            // surfaces. The unit's own Step Sequencer reports its pads on the
+            // Notes cable too, so those become step input for the selected
+            // 303/909 clip instead of piano-roll keys. Project/Custom notes are
+            // the unit's own data and must not be written anywhere.
             return when (mode) {
-                Apc64PadMode.STEP,
+                Apc64PadMode.STEP -> Apc64NoteRoute.STEP
                 Apc64PadMode.STEP_SETTINGS,
                 Apc64PadMode.PROJECT,
                 Apc64PadMode.CUSTOM,

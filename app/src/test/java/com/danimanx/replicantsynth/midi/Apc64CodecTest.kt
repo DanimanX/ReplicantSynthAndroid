@@ -101,11 +101,90 @@ class Apc64CodecTest {
         assertEquals(Apc64NoteRoute.IGNORE, Apc64Codec.routeNote(Apc64PadMode.STEP, false, 60))
         assertEquals(Apc64NoteRoute.IGNORE, Apc64Codec.routeNote(Apc64PadMode.CUSTOM, false, 0))
         // Step/custom Notes-cable data is not piano-roll input.
-        assertEquals(Apc64NoteRoute.IGNORE, Apc64Codec.routeNote(Apc64PadMode.STEP, true, 60))
+        // The unit's Step Sequencer pads arrive on the Notes cable and become
+        // step edits instead of piano-roll keys.
+        assertEquals(Apc64NoteRoute.STEP, Apc64Codec.routeNote(Apc64PadMode.STEP, true, 60))
+        assertEquals(
+            Apc64NoteRoute.STEP,
+            Apc64Codec.routeNote(Apc64PadMode.STEP, true, 36),
+        )
         assertEquals(Apc64NoteRoute.IGNORE, Apc64Codec.routeNote(Apc64PadMode.CUSTOM, true, 60))
         // Side buttons are control notes on the DAW cable only when not a key.
         assertEquals(Apc64NoteRoute.CONTROL, Apc64Codec.routeNote(Apc64PadMode.NOTE, false, 91))
         assertEquals(Apc64NoteRoute.KEY, Apc64Codec.routeNote(Apc64PadMode.NOTE, true, 91))
+    }
+
+    @Test
+    fun cursorClusterUsesAbletonNoteNumbers() {
+        assertEquals(Apc64Arrow.UP, Apc64Codec.arrowForNote(94))
+        assertEquals(Apc64Arrow.DOWN, Apc64Codec.arrowForNote(95))
+        assertEquals(Apc64Arrow.LEFT, Apc64Codec.arrowForNote(96))
+        assertEquals(Apc64Arrow.RIGHT, Apc64Codec.arrowForNote(97))
+        assertEquals(94, Apc64Codec.NOTE_ARROW_UP)
+        assertEquals(97, Apc64Codec.NOTE_ARROW_RIGHT)
+        assertNull(Apc64Codec.arrowForNote(93))
+        assertNull(Apc64Codec.arrowForNote(98))
+    }
+
+    @Test
+    fun cursorAndEncoderButtonAreSideControls() {
+        val arrows = Apc64Arrow.entries.map { it.note }
+        // Never a clip slot, scene, transport, track-select or shift button.
+        arrows.forEach { note ->
+            assertFalse(Apc64Codec.isPadRangeNote(note))
+            assertNull(Apc64Codec.sceneForNote(note))
+            assertFalse(note in Apc64Codec.TRACK_SELECT_FIRST..Apc64Codec.TRACK_SELECT_LAST)
+            assertFalse(
+                note == Apc64Codec.NOTE_PLAY || note == Apc64Codec.NOTE_RECORD ||
+                    note == Apc64Codec.NOTE_STOP || note == Apc64Codec.NOTE_SHIFT ||
+                    note == Apc64Codec.NOTE_CLIP_STOP || note == Apc64Codec.NOTE_MUTE ||
+                    note == Apc64Codec.NOTE_SOLO,
+            )
+            assertEquals(
+                Apc64NoteRoute.CONTROL,
+                Apc64Codec.routeNote(Apc64PadMode.SESSION, false, note),
+            )
+        }
+        assertEquals(
+            Apc64NoteRoute.CONTROL,
+            Apc64Codec.routeNote(Apc64PadMode.SESSION, false, Apc64Codec.NOTE_ENCODER_BUTTON),
+        )
+    }
+
+
+    @Test
+    fun stripLedFramesUseTheDocumentedControlChanges() {
+        // Bar position: pitch bend on the strip's channel, 14-bit.
+        assertArrayEquals(
+            byteArrayOf(0xE0.toByte(), 0x00, 0x40),
+            Apc64Codec.pitchBend(0, 8192),
+        )
+        assertArrayEquals(
+            byteArrayOf(0xE7.toByte(), 0x7F, 0x7F),
+            Apc64Codec.pitchBend(7, 16383),
+        )
+        assertEquals(0, Apc64Codec.stripPosition(0f))
+        assertEquals(16383, Apc64Codec.stripPosition(1f))
+        assertEquals(8191, Apc64Codec.stripPosition(0.5f))
+        // Bar style CC 104..111, colour CC 112..119.
+        assertArrayEquals(byteArrayOf(0xB0.toByte(), 104, 1), Apc64Codec.stripMode(0, 1))
+        assertArrayEquals(byteArrayOf(0xB0.toByte(), 111, 3), Apc64Codec.stripMode(7, 3))
+        assertArrayEquals(byteArrayOf(0xB0.toByte(), 112, 45), Apc64Codec.stripColor(0, 45))
+        assertArrayEquals(byteArrayOf(0xB0.toByte(), 119, 9), Apc64Codec.stripColor(7, 9))
+        assertArrayEquals(byteArrayOf(0xB0.toByte(), 104, 0), Apc64Codec.stripMode(0, 0))
+    }
+
+    @Test
+    fun stripTouchSensorsMapToStrips() {
+        assertEquals(0, Apc64Codec.stripTouchForNote(82))
+        assertEquals(7, Apc64Codec.stripTouchForNote(89))
+        assertNull(Apc64Codec.stripTouchForNote(81))
+        assertNull(Apc64Codec.stripTouchForNote(90))
+        // Strip touches are side controls, never clip slots.
+        assertEquals(
+            Apc64NoteRoute.CONTROL,
+            Apc64Codec.routeNote(Apc64PadMode.SESSION, false, 85),
+        )
     }
 
     @Test

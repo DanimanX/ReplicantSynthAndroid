@@ -40,3 +40,55 @@ class NoteGroupCursor(
         lastPressAt = 0L
     }
 }
+
+/**
+ * Free-running 16th-note clock for step input.
+ *
+ * The APC64's Step Sequencer is its own transport: when it plays, its notes
+ * arrive as MIDI and the app has no audio phase for them. This clock turns the
+ * wall-clock gap between notes into a step index so a captured sequence keeps its
+ * rhythm instead of collapsing onto one step. It is only used when the app's own
+ * transport is not playing the clip, in which case the engine phase wins.
+ */
+class StepClock(private val steps: Int = 16) {
+    private var lastMs: Long = 0L
+    private var step: Int = 0
+    private var running: Boolean = false
+
+    val current: Int get() = step
+
+    /**
+     * Advance by whole 16th notes since the previous call. The first note lands
+     * on step 0 and restarts the clock, so a captured take always begins at bar
+     * start regardless of how long the unit has been running.
+     */
+    fun tick(nowMs: Long, stepMs: Float): Int {
+        val period = stepMs.coerceAtLeast(1f)
+        if (!running) {
+            // First note after reset/seed: keep the seeded position.
+            running = true
+            lastMs = nowMs
+            return step
+        }
+        val elapsed = (nowMs - lastMs).coerceAtLeast(0L)
+        val advance = (elapsed / period).toInt()
+        if (advance > 0) {
+            step = (step + advance).mod(steps)
+            lastMs += (advance * period).toLong()
+        }
+        return step
+    }
+
+    fun reset() {
+        running = false
+        lastMs = 0L
+        step = 0
+    }
+
+    /** Place the clock on a step without starting it (streams start from here). */
+    fun seed(step: Int) {
+        running = false
+        lastMs = 0L
+        this.step = step.mod(steps)
+    }
+}

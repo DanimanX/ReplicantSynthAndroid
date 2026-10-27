@@ -17,6 +17,16 @@ import kotlinx.coroutines.flow.update
 
 data class Apc64DeviceInfo(val id: Int, val name: String)
 
+/**
+ * One touch-strip LED frame. [value] is the bar position 0..1, [mode] the bar
+ * style (off / bar / bipolar) and [color] an APC64 palette index.
+ */
+data class StripLed(
+    val value: Float,
+    val mode: Int = Apc64Codec.STRIP_MODE_BAR,
+    val color: Int = Apc64Codec.COLOR_WHITE,
+)
+
 data class Apc64State(
     val available: Boolean = false,
     val devices: List<Apc64DeviceInfo> = emptyList(),
@@ -30,6 +40,8 @@ data class Apc64State(
     val padMode: Apc64PadMode = Apc64PadMode.SESSION,
     val firmware: String? = null,
     val firmwareSupported: Boolean = true,
+    /** Lowest note of the unit's drum pads (Global Menu Drum 1), for Step Seq. */
+    val stepSeqDrumBase: Int = Apc64Codec.STEPSEQ_DRUM_BASE,
     val dawPort: String? = null,
     val notesPort: String? = null,
 ) {
@@ -44,6 +56,9 @@ sealed class Apc64Event {
     /** Raw key from the APC64 Notes/Chord surface, used by the piano roll. */
     data class Key(val note: Int, val velocity: Int, val pressed: Boolean) : Apc64Event()
 
+    /** Pad from the unit's own Step Sequencer: a step-edit gesture, not a key. */
+    data class StepKey(val note: Int, val velocity: Int, val pressed: Boolean) : Apc64Event()
+
     /** The unit changed its own pad mode (Session, Note, Chord, Step, ...). */
     data class Mode(val mode: Apc64PadMode) : Apc64Event()
 
@@ -52,6 +67,16 @@ sealed class Apc64Event {
 
     data class Scene(val row: Int) : Apc64Event()
     data class Transport(val action: TransportAction) : Apc64Event()
+
+    /** Cursor cluster press: walks the clip-editor menus. */
+    data class Arrow(val direction: Apc64Arrow, val pressed: Boolean) : Apc64Event()
+
+    /** Encoder press: activates the focused menu field. */
+    data class EncoderButton(val pressed: Boolean) : Apc64Event()
+
+    /** A finger touched or left touch strip [index] (0..7). */
+    data class StripTouch(val index: Int, val pressed: Boolean) : Apc64Event()
+
     data class Encoder(val delta: Int) : Apc64Event()
     data class TouchStrip(val index: Int, val value: Float) : Apc64Event()
     data class TrackSelect(val column: Int) : Apc64Event()
@@ -96,6 +121,10 @@ class Apc64Controller(
         Apc64State(
             available = midiManager != null,
             padBaseNote = prefs.getInt("padBase", Apc64Codec.PAD_BASE_DAW),
+            stepSeqDrumBase = prefs.getInt(
+                "stepSeqDrumBase",
+                Apc64Codec.STEPSEQ_DRUM_BASE,
+            ),
             flipRows = prefs.getBoolean("flipRows", true),
             ledFeedback = prefs.getBoolean("ledFeedback", true),
         ),
@@ -110,8 +139,13 @@ class Apc64Controller(
 
     private val ledCache = IntArray(Apc64Codec.PAD_COUNT) { -1 }
     private val sceneCache = IntArray(8) { -1 }
+    private val arrowCache = IntArray(Apc64Arrow.entries.size) { -1 }
+    private val stripCache = IntArray(Apc64Codec.STRIP_COUNT) { -1 }
+    /** Last 14-bit position we sent per strip, so a merged port cannot echo it. */
+    private val stripEcho = IntArray(Apc64Codec.STRIP_COUNT) { -1 }
     private var transportCache = -1
     private var lastRefreshMs = 0L
+    private var lastStripRefreshMs = 0L
 
     private val deviceCallback = object : MidiManager.DeviceCallback() {
         override fun onDeviceAdded(device: MidiDeviceInfo) {
@@ -231,7 +265,10 @@ class Apc64Controller(
         savedDeviceName = deviceName(info)
         prefs.edit().putString("deviceName", savedDeviceName).apply()
         ledCache.fill(-1)
+        arrowCache.fill(-1)
         sceneCache.fill(-1)
+        stripCache.fill(-1)
+        stripEcho.fill(-1)
         transportCache = -1
         lastRefreshMs = 0L
         _state.update {
@@ -309,7 +346,10 @@ class Apc64Controller(
         sendPort = null
         device = null
         ledCache.fill(-1)
+        arrowCache.fill(-1)
         sceneCache.fill(-1)
+        stripCache.fill(-1)
+        stripEcho.fill(-1)
         transportCache = -1
         lastRefreshMs = 0L
         _state.update {
@@ -334,6 +374,13 @@ class Apc64Controller(
         ledCache.fill(-1)
     }
 
+    /** Lowest note the unit's Step Seq drum pads send; 909 voices map from here. */
+    fun setStepSeqDrumBase(note: Int) {
+        val value = note.coerceIn(0, 108)
+        prefs.edit().putInt("stepSeqDrumBase", value).apply()
+        _state.update { it.copy(stepSeqDrumBase = value) }
+    }
+
     fun setFlipRows(flip: Boolean) {
         prefs.edit().putBoolean("flipRows", flip).apply()
         _state.update { it.copy(flipRows = flip) }
@@ -345,6 +392,39 @@ class Apc64Controller(
         _state.update { it.copy(ledFeedback = enabled) }
         if (!enabled) blankLeds()
         ledCache.fill(-1)
+        stripCache.fill(-1)
+    }
+
+    /**
+     * Mirror the eight touch strips. Each strip's LED bar is driven by a pitch
+     * bend on its channel, its style by CC 104..111 and its colour by
+     * CC 112..119; frames are only sent when the visible value changes.
+     */
+    fun updateStrips(leds: List<StripLed>) {
+        val current = _state.value
+        if (!current.ledFeedback || sendPort == null) return
+        val now = System.currentTimeMillis()
+        val fullRefresh = now - lastStripRefreshMs > 1200
+        if (fullRefresh) lastStripRefreshMs = now
+        for (strip in 0 until Apc64Codec.STRIP_COUNT) {
+            val led = leds.getOrNull(strip) ?: continue
+            val position = Apc64Codec.stripPosition(led.value)
+            val key = position or (led.mode shl 14) or (led.color shl 17)
+            if (stripCache[strip] == key && !fullRefresh) continue
+            stripCache[strip] = key
+            stripEcho[strip] = position
+            send(Apc64Codec.stripColor(strip, led.color))
+            send(Apc64Codec.stripMode(strip, led.mode))
+            send(Apc64Codec.pitchBend(strip, position))
+        }
+    }
+
+    /** Dark the strip LEDs when feedback is turned off. */
+    private fun blankStrips() {
+        for (strip in 0 until Apc64Codec.STRIP_COUNT) {
+            send(Apc64Codec.stripMode(strip, Apc64Codec.STRIP_MODE_OFF))
+        }
+        stripCache.fill(-1)
     }
 
     fun sendTestPattern() {
@@ -373,6 +453,7 @@ class Apc64Controller(
         selectedPad: Int,
         playing: Boolean,
         recording: Boolean,
+        navActive: Boolean = false,
     ) {
         val current = _state.value
         if (!current.ledFeedback || sendPort == null) return
@@ -441,11 +522,31 @@ class Apc64Controller(
             )
             transportCache = transport
         }
+
+        // Cursor cluster: lit while a clip editor is open, so the player can see
+        // that up/down walks the menus and left/right walks the fields.
+        for (arrow in Apc64Arrow.entries) {
+            val color = when {
+                !navActive -> Apc64Codec.COLOR_OFF
+                arrow == Apc64Arrow.UP || arrow == Apc64Arrow.DOWN -> Apc64Codec.COLOR_AMBER
+                else -> Apc64Codec.COLOR_BLUE
+            }
+            val channel = if (navActive) Apc64Codec.LED_FULL else Apc64Codec.LED_HALF
+            val key = color or (channel shl 8)
+            val slot = arrow.ordinal
+            if (arrowCache[slot] != key || fullRefresh) {
+                send(Apc64Codec.led(arrow.note, color, channel))
+                arrowCache[slot] = key
+            }
+        }
     }
 
     private fun blankLeds() {
         for (note in 0 until Apc64Codec.PAD_COUNT) send(Apc64Codec.led(note, 0))
         for (row in 0 until 8) send(Apc64Codec.led(Apc64Codec.SCENE_FIRST + row, 0))
+        for (arrow in Apc64Arrow.entries) send(Apc64Codec.led(arrow.note, 0))
+        arrowCache.fill(-1)
+        blankStrips()
     }
 
     private fun handleMessages(messages: List<MidiMessage>, source: Source) {
@@ -477,12 +578,18 @@ class Apc64Controller(
                 }
                 is MidiMessage.PitchBend -> {
                     if (source == Source.DAW && message.channel in 0..7) {
-                        onEvent(
-                            Apc64Event.TouchStrip(
-                                message.channel,
-                                Apc64Codec.touchStripValue(message.value + 8192),
-                            ),
-                        )
+                        val raw = message.value + 8192
+                        // A merged USB port can echo our own LED frames. Skip the
+                        // exact value we just sent so the strip does not fight
+                        // the user's finger.
+                        if (stripEcho[message.channel] != raw) {
+                            onEvent(
+                                Apc64Event.TouchStrip(
+                                    message.channel,
+                                    Apc64Codec.touchStripValue(raw),
+                                ),
+                            )
+                        }
                     }
                 }
                 else -> Unit
@@ -513,6 +620,7 @@ class Apc64Controller(
         )
         when (route) {
             Apc64NoteRoute.KEY -> onEvent(Apc64Event.Key(note, velocity, pressed))
+            Apc64NoteRoute.STEP -> onEvent(Apc64Event.StepKey(note, velocity, pressed))
             Apc64NoteRoute.CLIP -> {
                 val pad = Apc64Codec.padForNote(
                     note,
@@ -526,7 +634,7 @@ class Apc64Controller(
         }
     }
 
-    /** Scene, transport, mute/solo, shift and track-select notes on the DAW cable. */
+    /** Scene, transport, cursor cluster, mute/solo, shift and track-select notes. */
     private fun handleControlNote(note: Int, pressed: Boolean) {
         if (pressed) {
             val scene = Apc64Codec.sceneForNote(note)
@@ -534,10 +642,21 @@ class Apc64Controller(
                 onEvent(Apc64Event.Scene(scene))
                 return
             }
+            val arrow = Apc64Codec.arrowForNote(note)
+            if (arrow != null) {
+                onEvent(Apc64Event.Arrow(arrow, true))
+                return
+            }
+            val stripTouch = Apc64Codec.stripTouchForNote(note)
+            if (stripTouch != null) {
+                onEvent(Apc64Event.StripTouch(stripTouch, true))
+                return
+            }
             when (note) {
                 Apc64Codec.NOTE_PLAY -> onEvent(Apc64Event.Transport(TransportAction.PLAY))
                 Apc64Codec.NOTE_STOP -> onEvent(Apc64Event.Transport(TransportAction.STOP))
                 Apc64Codec.NOTE_RECORD -> onEvent(Apc64Event.Transport(TransportAction.RECORD))
+                Apc64Codec.NOTE_ENCODER_BUTTON -> onEvent(Apc64Event.EncoderButton(true))
                 Apc64Codec.NOTE_CLIP_STOP -> onEvent(Apc64Event.ClipStop)
                 Apc64Codec.NOTE_MUTE -> onEvent(Apc64Event.Mute(true))
                 Apc64Codec.NOTE_SOLO -> onEvent(Apc64Event.Solo(true))
@@ -547,7 +666,18 @@ class Apc64Controller(
                 }
             }
         } else {
+            val arrow = Apc64Codec.arrowForNote(note)
+            if (arrow != null) {
+                onEvent(Apc64Event.Arrow(arrow, false))
+                return
+            }
+            val stripTouch = Apc64Codec.stripTouchForNote(note)
+            if (stripTouch != null) {
+                onEvent(Apc64Event.StripTouch(stripTouch, false))
+                return
+            }
             when (note) {
+                Apc64Codec.NOTE_ENCODER_BUTTON -> onEvent(Apc64Event.EncoderButton(false))
                 Apc64Codec.NOTE_MUTE -> onEvent(Apc64Event.Mute(false))
                 Apc64Codec.NOTE_SOLO -> onEvent(Apc64Event.Solo(false))
                 Apc64Codec.NOTE_SHIFT -> onEvent(Apc64Event.Shift(false))
@@ -587,7 +717,9 @@ class Apc64Controller(
         // The unit clears its host-drawn grid on every mode change; force a
         // complete redraw when Session becomes host-owned again.
         ledCache.fill(-1)
+        arrowCache.fill(-1)
         sceneCache.fill(-1)
+        stripCache.fill(-1)
         transportCache = -1
         lastRefreshMs = 0L
         if (previous.keySurface && !mode.keySurface) {

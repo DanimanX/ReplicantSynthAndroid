@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -32,10 +33,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -661,12 +658,14 @@ internal fun PatternTab(vm: MainViewModel, clip: Clip) {
         )
     } else {
         SectionTitle("16-STEP CLIP", color = Amber)
-        var selected by remember(clip.index) { mutableIntStateOf(0) }
+        // Shared with the APC64 cursor cluster, so the hardware and the screen
+        // always edit the same step.
+        val selected = vm.patternStep.coerceIn(0, ClipLimits.STEPS - 1)
         StepGrid(
             vm = vm,
             clip = clip,
             selected = selected,
-            onSelect = { selected = it },
+            onSelect = { vm.selectPatternStep(it) },
         )
         Spacer(Modifier.height(8.dp))
         val step = clip.steps.getOrElse(selected) { Step() }
@@ -717,6 +716,7 @@ internal fun StepGrid(
     selected: Int,
     onSelect: (Int) -> Unit,
 ) {
+    val runtime = vm.padRuntime[clip.index].value
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -724,6 +724,7 @@ internal fun StepGrid(
         for (index in 0 until ClipLimits.STEPS) {
             val step = clip.steps[index]
             val isSelected = index == selected
+            val playingStep = runtime.isPlaying && runtime.phase == index
             val accentColor = kindColor(clip.kind.ordinal)
             Box(
                 Modifier
@@ -731,7 +732,11 @@ internal fun StepGrid(
                     .height(44.dp)
                     .clip(RoundedCornerShape(5.dp))
                     .background(
-                        if (step.gate) accentColor.copy(alpha = 0.32f) else PanelHi,
+                        when {
+                            playingStep -> Lime.copy(alpha = if (step.gate) 0.5f else 0.22f)
+                            step.gate -> accentColor.copy(alpha = 0.32f)
+                            else -> PanelHi
+                        },
                     )
                     .border(
                         if (isSelected) 1.4.dp else 1.dp,
@@ -789,6 +794,7 @@ internal fun StepGrid(
 
 @Composable
 internal fun DrumGrid(vm: MainViewModel, clip: Clip) {
+    val runtime = vm.padRuntime[clip.index].value
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         for (voice in 0 until ClipLimits.DRUM_VOICES) {
             Row(
@@ -798,31 +804,42 @@ internal fun DrumGrid(vm: MainViewModel, clip: Clip) {
             ) {
                 Text(
                     text = DRUM_VOICE_NAMES[voice],
-                    color = Magenta,
+                    color = if (vm.patternVoice == voice) Amber else Magenta,
                     fontSize = 8.sp,
                     fontFamily = Mono,
-                    modifier = Modifier.width(22.dp),
+                    modifier = Modifier
+                        .width(22.dp)
+                        .clickable { vm.selectPatternVoice(voice) },
                 )
                 for (step in 0 until ClipLimits.STEPS) {
                     val on = clip.drumOn(voice, step)
                     val velocity = clip.drumVelocity(voice, step)
+                    val playingStep = runtime.isPlaying && runtime.phase == step
                     Box(
                         Modifier
                             .weight(1f)
                             .height(15.dp)
                             .clip(RoundedCornerShape(3.dp))
                             .background(
-                                if (on) {
-                                    if (velocity >= 110) Amber.copy(alpha = 0.75f)
+                                when {
+                                    playingStep && on -> Lime.copy(alpha = 0.85f)
+                                    playingStep -> Lime.copy(alpha = 0.18f)
+                                    on -> if (velocity >= 110) Amber.copy(alpha = 0.75f)
                                     else Magenta.copy(alpha = 0.48f)
-                                } else {
-                                    PanelHi
+                                    else -> PanelHi
                                 },
                             )
                             .border(1.dp, PanelLine.copy(alpha = 0.6f), RoundedCornerShape(3.dp))
                             .combinedClickable(
-                                onClick = { vm.toggleDrumStep(clip, voice, step) },
+                                onClick = {
+                                    // Keep the hardware cursor on the cell you touch.
+                                    vm.selectPatternVoice(voice)
+                                    vm.selectPatternStep(step)
+                                    vm.toggleDrumStep(clip, voice, step)
+                                },
                                 onLongClick = {
+                                    vm.selectPatternVoice(voice)
+                                    vm.selectPatternStep(step)
                                     if (on) {
                                         val next = when {
                                             velocity < 85 -> 100

@@ -365,9 +365,54 @@ fun MidiSheet(vm: MainViewModel) {
                 modifier = Modifier.padding(top = 4.dp),
             )
 
+            SectionTitle("TOUCH STRIPS")
+            MonoLabel(
+                "LED BARS FOLLOW THE VALUE · CC 104-111 / 112-119 + PITCH BEND",
+                color = TextDim,
+                size = 8,
+            )
+            MonoLabel(
+                "1 MASTER · 8 PAD GAIN · 2-7 = SIX FIELDS OF THE FOCUSED MENU",
+                color = Cyan,
+                size = 8,
+            )
+            Text(
+                "Open a clip and the middle strips become that page's parameters: the six " +
+                    "engine knobs on SOUND, the six macros on FX, the step fields on STEPS. " +
+                    "Touching a strip focuses its field on the editor and on the OLED.",
+                color = TextMid,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+
+            SectionTitle("STEP SEQUENCER")
+            SwitchRow(
+                label = "STEP SEQ TO CLIP",
+                detail = "Step-view pads add/remove steps of the selected clip",
+                checked = vm.stepSeqCapture,
+            ) { vm.toggleStepSeqCapture(it) }
+            Spacer(Modifier.height(4.dp))
+            MonoLabel("DRUM PAD BASE NOTE", color = TextDim, size = 8)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(36, 40, 48, 60).forEach { base ->
+                    NeonChip("$base", state.stepSeqDrumBase == base, Amber) {
+                        vm.midi.setStepSeqDrumBase(base)
+                    }
+                }
+            }
+            Text(
+                "The APC64 Step Sequencer is its own transport and owns its pad grid, so the " +
+                    "app cannot draw on it. Its pads and notes are read from the Notes cable " +
+                    "instead: stopped, a pad toggles a cell; playing, it records the unit's " +
+                    "sequence into the clip with the incoming velocity, quantised to 16ths.",
+                color = TextMid,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+
             SectionTitle("CONTROLS")
             Text(
-                "PADS SESSION  NOTES 0–63 (CLIPS)\nPADS NOTE     NOTES PORT → PIANO ROLL\nPADS CHORD    NOTES PORT → CHORD NOTES\nSCENES        NOTES 112–119\nPLAY/STOP     91 / 93\nRECORD        92\nCLIP STOP     111\nMUTE / SOLO   109 / 110\nENCODER       CC 90\nTOUCH 1–8     PB CH 1–8\nSTRIP 1       MASTER GAIN\nSTRIP 8       PAD GAIN\nSTRIP 2–7     FX PARAMS 1–6",
+                "PADS SESSION  NOTES 0–63 (CLIPS)\nPADS NOTE     NOTES PORT → PIANO ROLL\nPADS CHORD    NOTES PORT → CHORD NOTES\nSCENES        NOTES 112–119\nPLAY/STOP     91 / 93\nRECORD        92\nCLIP STOP     111\nMUTE / SOLO   109 / 110\nCURSORS       94 / 95 / 96 / 97\nENCODER       CC 90\nENC PRESS     NOTE 90\nTOUCH 1–8     PB CH 1–8\nSTRIP 1       MASTER GAIN\nSTRIP 8       PAD GAIN\nSTRIP 2–7     SIX FIELDS OF THE FOCUSED MENU\nMENUS  UP/DOWN PAGE · LEFT/RIGHT FIELD\nSTEP SEQ      NOTES → CLIP STEPS",
                 color = TextMid,
                 fontFamily = Mono,
                 fontSize = 8.sp,

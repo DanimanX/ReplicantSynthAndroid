@@ -56,6 +56,8 @@ import com.danimanx.replicantsynth.model.WAVE_PRESETS
 import com.danimanx.replicantsynth.model.WaveParam
 import com.danimanx.replicantsynth.model.quantizeLabel
 import com.danimanx.replicantsynth.midi.Apc64PadMode
+import com.danimanx.replicantsynth.midi.Apc64State
+import com.danimanx.replicantsynth.model.StripTone
 import com.danimanx.replicantsynth.ui.MainViewModel
 import com.danimanx.replicantsynth.ui.theme.Amber
 import com.danimanx.replicantsynth.ui.theme.Cyan
@@ -76,6 +78,7 @@ import java.util.Locale
 fun ClipEditorDialog(vm: MainViewModel) {
     val pad = vm.editorPad ?: return
     val clip = vm.project.clips[pad]
+    val midi by vm.midiState.collectAsState()
     SheetFrame(
         title = "CLIP ${(pad + 1).toString().padStart(2, '0')} · ${engineName(clip.kind)}",
         subtitle = "DOUBLE-TAP ANY PAD TO EDIT · ${clip.displayName}",
@@ -92,6 +95,8 @@ fun ClipEditorDialog(vm: MainViewModel) {
                 MonoLabel("${vm.presetCount(clip.kind)} PRESETS", color = TextDim, size = 8)
                 LedButton("PRESETS", false, kindColor(clip.kind.ordinal)) { vm.browsePresets() }
             }
+            Spacer(Modifier.height(6.dp))
+            EditorNavBar(vm, midi)
             HorizontalDivider(
                 Modifier.padding(top = 6.dp),
                 color = PanelLine.copy(alpha = 0.7f),
@@ -113,6 +118,123 @@ fun ClipEditorDialog(vm: MainViewModel) {
                 )
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * On-screen mirror of the APC64 cursor cluster: the menus the arrows walk, the
+ * focused field and its live value. Tapping a page chip moves the same cursor
+ * the hardware drives, so touch and controller never disagree.
+ */
+@Composable
+private fun EditorNavBar(vm: MainViewModel, midi: Apc64State) {
+    val pages = vm.navPageTitles()
+    val current = vm.navPageTitle()
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(PanelHi)
+            .border(1.dp, PanelLine, RoundedCornerShape(10.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MonoLabel("APC64", color = if (midi.connected) Lime else TextDim, size = 8)
+            pages.forEachIndexed { index, title ->
+                NeonChip(title, title == current, Cyan) { vm.selectNavPage(index) }
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        if (pages.isEmpty()) {
+            MonoLabel(
+                "ASSIGN AN ENGINE TO WALK THESE MENUS",
+                color = Amber,
+                size = 8,
+            )
+        } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MonoLabel(
+                    "${vm.navPosition()} · ${vm.navFieldLabel()}",
+                    color = TextDim,
+                    size = 8,
+                )
+                Spacer(Modifier.weight(1f))
+                MonoLabel(vm.navFieldValue(), color = Amber, size = 11)
+            }
+            Spacer(Modifier.height(4.dp))
+            StripRow(vm)
+            Spacer(Modifier.height(3.dp))
+            MonoLabel(
+                when {
+                    !midi.connected ->
+                        "CONNECT THE APC64 · ITS CURSORS WALK THESE MENUS"
+                    midi.padMode == Apc64PadMode.STEP ->
+                        "STEP SEQ MODE · PADS WRITE INTO THIS CLIP"
+                    else ->
+                        "UP/DOWN MENU · LEFT/RIGHT FIELD · ENC EDIT · ENC PRESS = GO"
+                },
+                color = if (midi.connected) Lime else TextDim,
+                size = 7,
+            )
+        }
+    }
+}
+
+/**
+ * The eight adaptive touch strips: 1 master, 8 pad gain, 2–7 the six continuous
+ * parameters of the focused page. Each bar mirrors the LED bar on the hardware.
+ */
+@Composable
+private fun StripRow(vm: MainViewModel) {
+    val slots = vm.stripSlots()
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        slots.forEachIndexed { index, slot ->
+            val tone = when (slot.tone) {
+                StripTone.AMBER -> Amber
+                StripTone.CYAN -> Cyan
+                StripTone.GREEN -> Lime
+                StripTone.MAGENTA -> Magenta
+                StripTone.WHITE -> TextBright
+            }
+            val idle = slot.label.isBlank()
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(PanelLine.copy(alpha = 0.45f)),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    if (!idle) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height((14 * slot.value.coerceIn(0f, 1f)).dp)
+                                .background(tone.copy(alpha = 0.85f)),
+                        )
+                    }
+                }
+                // Bars are in strip order, so the hardware number is implicit; the
+                // label needs the width more than the index does.
+                MonoLabel(
+                    if (idle) "${index + 1}" else slot.label,
+                    color = if (idle) TextDim.copy(alpha = 0.5f) else tone,
+                    size = 6,
+                )
+            }
         }
     }
 }
@@ -323,6 +445,21 @@ private fun PianoRoll(vm: MainViewModel, clip: Clip) {
                     color = Cyan.copy(alpha = 0.08f),
                     topLeft = Offset(runtime.phase.coerceIn(0, 15) * colW, 0f),
                     size = Size(colW, size.height),
+                )
+            }
+            // Pitch the APC64 cursor cluster is pointing at (NOTE field).
+            val navRow = high - vm.midiPitch
+            if (vm.editorPad == clip.index && navRow in 0 until rows) {
+                drawRect(
+                    color = Lime.copy(alpha = 0.10f),
+                    topLeft = Offset(0f, navRow * rowH),
+                    size = Size(size.width, rowH),
+                )
+                drawRect(
+                    color = Lime.copy(alpha = 0.55f),
+                    topLeft = Offset(0f, navRow * rowH),
+                    size = Size(size.width, rowH),
+                    style = Stroke(width = 1f),
                 )
             }
             drawLine(
